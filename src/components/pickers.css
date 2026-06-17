@@ -1,0 +1,43 @@
+.browse-btn {
+  padding: 8px 16px;
+  background: #3d5a80;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.browse-btn:hover:not(:disabled) {
+  background: #4a6fa5;
+}
+
+.browse-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.picker-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.picker-path {
+  flex: 1;
+  padding: 8px 12px;
+  background: #16213e;
+  border: 1px solid #2a2a4a;
+  border-radius: 6px;
+  color: #ccc;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.picker-path.has-value {
+  color: #eaeaea;
+}

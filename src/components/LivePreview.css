@@ -1,0 +1,125 @@
+.live-preview {
+  padding: 16px;
+  background: #16213e;
+  border: 1px solid #2a2a4a;
+  border-radius: 10px;
+  margin-bottom: 24px;
+}
+
+.live-preview-empty {
+  text-align: center;
+  color: #8892b0;
+  font-size: 0.9rem;
+}
+
+.live-preview-empty p {
+  margin: 0;
+}
+
+.live-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.live-preview-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #ccd6f6;
+}
+
+.preview-duration {
+  font-size: 0.85rem;
+  color: #64ffda;
+  font-weight: 500;
+}
+
+.preview-frame-wrap {
+  position: relative;
+  background: #0a192f;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+.preview-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.preview-placeholder {
+  color: #8892b0;
+  font-size: 0.875rem;
+}
+
+.preview-overlay-status {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px 10px;
+  background: rgba(10, 25, 47, 0.85);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: #ccd6f6;
+  z-index: 1;
+}
+
+.preview-overlay-status.preview-error {
+  color: #ffb4b4;
+  left: 8px;
+  right: 8px;
+  text-align: center;
+}
+
+.timeline-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  font-size: 0.75rem;
+  color: #8892b0;
+}
+
+.timeline-track {
+  display: flex;
+  height: 36px;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 4px;
+  border: 1px solid #2a2a4a;
+}
+
+.timeline-segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2px;
+  overflow: hidden;
+  border-right: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+.timeline-segment:last-child {
+  border-right: none;
+}
+
+.timeline-segment-label {
+  font-size: 0.65rem;
+  color: #fff;
+  padding: 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.timeline-hint {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: #8892b0;
+  line-height: 1.4;
+}
