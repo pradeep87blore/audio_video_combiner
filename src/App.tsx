@@ -3,128 +3,161 @@ import { FilePicker } from './components/FilePicker'
 import { FolderPicker } from './components/FolderPicker'
 import { OpacitySlider } from './components/OpacitySlider'
 import { PrimaryModeSelector } from './components/PrimaryModeSelector'
+import { SceneTransitionsToggle } from './components/SceneTransitionsToggle'
 import { EncoderSelector } from './components/EncoderSelector'
 import { LivePreview } from './components/LivePreview'
 import { ProgressPanel } from './components/ProgressPanel'
-import { useCombiner } from './hooks/useCombiner'
+import { JobTabs } from './components/JobTabs'
 import { usePreview } from './hooks/usePreview'
+import { DEFAULT_SETTINGS } from './hooks/usePersistedSettings'
 import {
-  buildAppSettings,
-  DEFAULT_SETTINGS,
-  useAutoSaveSettings,
-  useSettingsHydration
-} from './hooks/usePersistedSettings'
-import type { AppSettings, EncoderInfo, PrimaryMode } from './types'
+  syncTabFromQueue,
+  useAutoSaveTabsState,
+  useJobQueue,
+  useTabsHydration
+} from './hooks/useJobQueue'
+import type { AppSettings, EncoderInfo, JobTabState, PrimaryMode, QueueSnapshot, TabsPersistedState } from './types'
+import {
+  createEmptyTab,
+  labelFromOutputPath,
+  settingsToCombineOptions,
+  tabHasActiveJob
+} from './utils/jobTab'
 import './App.css'
 
 function basename(filePath: string): string {
   return filePath.split(/[/\\]/).pop() ?? filePath
 }
 
+function createInitialTabsState(): TabsPersistedState {
+  const tab = createEmptyTab(1)
+  return { activeTabId: tab.id, tabs: [tab] }
+}
+
 export default function App(): JSX.Element {
-  const [primaryMode, setPrimaryMode] = useState<PrimaryMode>(DEFAULT_SETTINGS.primaryMode)
-  const [primaryFolder, setPrimaryFolder] = useState(DEFAULT_SETTINGS.primaryFolder)
+  const [tabsState, setTabsState] = useState<TabsPersistedState>(createInitialTabsState)
+  const [queueSnapshot, setQueueSnapshot] = useState<QueueSnapshot>({ jobs: [], activeCount: 0 })
   const [primaryFiles, setPrimaryFiles] = useState<string[]>([])
-  const [introPath, setIntroPath] = useState(DEFAULT_SETTINGS.introPath)
-  const [outroPath, setOutroPath] = useState(DEFAULT_SETTINGS.outroPath)
-  const [overlayPath, setOverlayPath] = useState(DEFAULT_SETTINGS.overlayPath)
-  const [overlayOpacity, setOverlayOpacity] = useState(DEFAULT_SETTINGS.overlayOpacity)
-  const [wavPath, setWavPath] = useState(DEFAULT_SETTINGS.wavPath)
-  const [outputPath, setOutputPath] = useState(DEFAULT_SETTINGS.outputPath)
-  const [encoderPreference, setEncoderPreference] = useState(DEFAULT_SETTINGS.encoderPreference)
   const [detectedEncoder, setDetectedEncoder] = useState<EncoderInfo | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
+  const [hydrated, setHydrated] = useState(false)
 
-  const { isProcessing, progress, statusMessage, log, error, combine } = useCombiner()
-
-  const applySavedSettings = useCallback((saved: AppSettings) => {
-    setPrimaryMode(saved.primaryMode)
-    setPrimaryFolder(saved.primaryFolder)
-    setIntroPath(saved.introPath ?? '')
-    setOutroPath(saved.outroPath ?? '')
-    setOverlayPath(saved.overlayPath)
-    setOverlayOpacity(saved.overlayOpacity)
-    setWavPath(saved.wavPath)
-    setOutputPath(saved.outputPath)
-    setEncoderPreference(saved.encoderPreference ?? 'auto')
-  }, [])
-
-  const settingsHydrated = useSettingsHydration(applySavedSettings)
-
-  const persistedSettings = useMemo(
-    () =>
-      buildAppSettings({
-        primaryMode,
-        primaryFolder,
-        introPath,
-        outroPath,
-        overlayPath,
-        overlayOpacity,
-        wavPath,
-        outputPath,
-        encoderPreference
-      }),
-    [
-      primaryMode,
-      primaryFolder,
-      introPath,
-      outroPath,
-      overlayPath,
-      overlayOpacity,
-      wavPath,
-      outputPath,
-      encoderPreference
-    ]
+  const activeTab = useMemo(
+    () => tabsState.tabs.find((tab) => tab.id === tabsState.activeTabId) ?? tabsState.tabs[0],
+    [tabsState]
   )
 
-  useEffect(() => {
-    if (!settingsHydrated) return
-    void window.api.detectEncoder(encoderPreference).then(setDetectedEncoder)
-  }, [settingsHydrated, encoderPreference])
+  const settings = activeTab?.settings ?? DEFAULT_SETTINGS
 
-  useAutoSaveSettings(persistedSettings, settingsHydrated)
+  const handleHydrate = useCallback((state: TabsPersistedState) => {
+    setTabsState(state)
+    setHydrated(true)
+  }, [])
 
-  const { preview, loading: previewLoading, error: previewError } = usePreview({
-    primaryMode,
-    primaryFiles,
-    introPath,
-    outroPath,
-    overlayPath,
-    wavPath,
-    enabled: !isProcessing && settingsHydrated
-  })
+  useTabsHydration(handleHydrate)
 
-  const refreshPrimaryList = useCallback(
-    async (folder: string, mode: PrimaryMode) => {
-      const files =
-        mode === 'images'
-          ? await window.api.listImagesInFolder(folder)
-          : await window.api.listVideosInFolder(folder)
-      setPrimaryFiles(files)
-      return files
+  const handleQueueChange = useCallback((snapshot: QueueSnapshot) => {
+    setQueueSnapshot(snapshot)
+    setTabsState((prev) => ({
+      ...prev,
+      tabs: syncTabFromQueue(prev.tabs, snapshot)
+    }))
+  }, [])
+
+  useJobQueue(handleQueueChange)
+
+  useAutoSaveTabsState(tabsState, hydrated)
+
+  const updateActiveTab = useCallback(
+    (update: (tab: JobTabState) => JobTabState) => {
+      setTabsState((prev) => ({
+        ...prev,
+        tabs: prev.tabs.map((tab) => (tab.id === prev.activeTabId ? update(tab) : tab))
+      }))
     },
     []
   )
 
+  const updateSettings = useCallback(
+    (patch: Partial<AppSettings>) => {
+      updateActiveTab((tab) => {
+        const nextSettings = { ...tab.settings, ...patch }
+        const label =
+          patch.outputPath !== undefined
+            ? labelFromOutputPath(patch.outputPath, tab.label)
+            : tab.label
+        return { ...tab, settings: nextSettings, label }
+      })
+    },
+    [updateActiveTab]
+  )
+
   useEffect(() => {
-    if (primaryFolder) {
-      refreshPrimaryList(primaryFolder, primaryMode)
+    if (!hydrated) return
+    void window.api.detectEncoder(settings.encoderPreference).then(setDetectedEncoder)
+  }, [hydrated, settings.encoderPreference])
+
+  const refreshPrimaryList = useCallback(async (folder: string, mode: PrimaryMode) => {
+    const files =
+      mode === 'images'
+        ? await window.api.listImagesInFolder(folder)
+        : await window.api.listVideosInFolder(folder)
+    setPrimaryFiles(files)
+    return files
+  }, [])
+
+  useEffect(() => {
+    if (!hydrated || !activeTab) return
+    if (activeTab.settings.primaryFolder) {
+      void refreshPrimaryList(activeTab.settings.primaryFolder, activeTab.settings.primaryMode)
     } else {
       setPrimaryFiles([])
     }
-  }, [primaryFolder, primaryMode, refreshPrimaryList])
+  }, [
+    hydrated,
+    activeTab?.id,
+    activeTab?.settings.primaryFolder,
+    activeTab?.settings.primaryMode,
+    refreshPrimaryList
+  ])
+
+  const handleSelectTab = (tabId: string): void => {
+    setTabsState((prev) => ({ ...prev, activeTabId: tabId }))
+    setValidationError(null)
+  }
+
+  const handleAddTab = (): void => {
+    const newTab = createEmptyTab(tabsState.tabs.length + 1)
+    setTabsState((prev) => ({
+      activeTabId: newTab.id,
+      tabs: [...prev.tabs, newTab]
+    }))
+    setValidationError(null)
+  }
+
+  const handleCloseTab = (tabId: string): void => {
+    const tab = tabsState.tabs.find((entry) => entry.id === tabId)
+    if (!tab || tabHasActiveJob(tab) || tabsState.tabs.length <= 1) return
+
+    setTabsState((prev) => {
+      const tabs = prev.tabs.filter((entry) => entry.id !== tabId)
+      const activeTabId = prev.activeTabId === tabId ? tabs[0].id : prev.activeTabId
+      return { activeTabId, tabs }
+    })
+    setValidationError(null)
+  }
 
   const handleBrowsePrimaryFolder = async (): Promise<void> => {
     const folder = await window.api.selectFolder()
     if (folder) {
-      setPrimaryFolder(folder)
-      await refreshPrimaryList(folder, primaryMode)
+      updateSettings({ primaryFolder: folder })
+      await refreshPrimaryList(folder, settings.primaryMode)
       setValidationError(null)
     }
   }
 
   const handlePrimaryModeChange = (mode: PrimaryMode): void => {
-    setPrimaryMode(mode)
+    updateSettings({ primaryMode: mode })
     setValidationError(null)
   }
 
@@ -133,7 +166,7 @@ export default function App(): JSX.Element {
       { name: 'Video', extensions: ['mp4', 'mov', 'mkv', 'avi', 'webm'] }
     ])
     if (file) {
-      setIntroPath(file)
+      updateSettings({ introPath: file })
       setValidationError(null)
     }
   }
@@ -143,7 +176,7 @@ export default function App(): JSX.Element {
       { name: 'Video', extensions: ['mp4', 'mov', 'mkv', 'avi', 'webm'] }
     ])
     if (file) {
-      setOutroPath(file)
+      updateSettings({ outroPath: file })
       setValidationError(null)
     }
   }
@@ -153,7 +186,7 @@ export default function App(): JSX.Element {
       { name: 'Video', extensions: ['mp4', 'mov', 'mkv', 'avi', 'webm'] }
     ])
     if (file) {
-      setOverlayPath(file)
+      updateSettings({ overlayPath: file })
       setValidationError(null)
     }
   }
@@ -161,7 +194,7 @@ export default function App(): JSX.Element {
   const handleBrowseWav = async (): Promise<void> => {
     const file = await window.api.selectFile([{ name: 'WAV Audio', extensions: ['wav'] }])
     if (file) {
-      setWavPath(file)
+      updateSettings({ wavPath: file })
       setValidationError(null)
     }
   }
@@ -169,39 +202,31 @@ export default function App(): JSX.Element {
   const handleBrowseOutput = async (): Promise<void> => {
     const file = await window.api.selectSavePath('output.mp4')
     if (file) {
-      setOutputPath(file.endsWith('.mp4') ? file : `${file}.mp4`)
+      updateSettings({ outputPath: file.endsWith('.mp4') ? file : `${file}.mp4` })
       setValidationError(null)
     }
   }
 
   const handleReset = async (): Promise<void> => {
     await window.api.clearSettings()
-    setPrimaryMode(DEFAULT_SETTINGS.primaryMode)
-    setPrimaryFolder(DEFAULT_SETTINGS.primaryFolder)
+    setTabsState(createInitialTabsState())
     setPrimaryFiles([])
-    setIntroPath(DEFAULT_SETTINGS.introPath)
-    setOutroPath(DEFAULT_SETTINGS.outroPath)
-    setOverlayPath(DEFAULT_SETTINGS.overlayPath)
-    setOverlayOpacity(DEFAULT_SETTINGS.overlayOpacity)
-    setWavPath(DEFAULT_SETTINGS.wavPath)
-    setOutputPath(DEFAULT_SETTINGS.outputPath)
-    setEncoderPreference(DEFAULT_SETTINGS.encoderPreference)
     setValidationError(null)
   }
 
   const validate = (): string | null => {
-    if (!primaryFolder) {
-      return primaryMode === 'images'
+    if (!settings.primaryFolder) {
+      return settings.primaryMode === 'images'
         ? 'Select a folder containing primary background images.'
         : 'Select a folder containing primary video clips.'
     }
     if (primaryFiles.length === 0) {
-      return primaryMode === 'images'
+      return settings.primaryMode === 'images'
         ? 'The selected folder contains no supported image files (.jpg, .jpeg, .png, .webp, .bmp, .gif).'
         : 'The selected folder contains no supported video files (.mp4, .mov, .mkv, .avi, .webm).'
     }
-    if (!wavPath) return 'Select a WAV music file.'
-    if (!outputPath) return 'Choose an output file path.'
+    if (!settings.wavPath) return 'Select a WAV music file.'
+    if (!settings.outputPath) return 'Choose an output file path.'
     return null
   }
 
@@ -212,23 +237,32 @@ export default function App(): JSX.Element {
       return
     }
 
+    if (!activeTab) return
+
     setValidationError(null)
-    await combine({
-      primaryFolder,
-      primaryMode,
-      introPath: introPath || undefined,
-      outroPath: outroPath || undefined,
-      overlayPath: overlayPath || undefined,
-      overlayOpacity,
-      wavPath,
-      outputPath,
-      encoderPreference
-    })
+    await window.api.enqueueCombine(activeTab.id, settingsToCombineOptions(settings))
   }
 
-  const showSuccess = !isProcessing && progress === 100 && !error
-  const fileLabel = primaryMode === 'images' ? 'image' : 'video clip'
-  const fileLabelPlural = primaryMode === 'images' ? 'images' : 'video clips'
+  const tabIsBusy = activeTab ? tabHasActiveJob(activeTab) : false
+
+  const { preview, loading: previewLoading, error: previewError } = usePreview({
+    primaryMode: settings.primaryMode,
+    primaryFiles,
+    introPath: settings.introPath,
+    outroPath: settings.outroPath,
+    overlayPath: settings.overlayPath,
+    wavPath: settings.wavPath,
+    enabled: hydrated && !!activeTab && !tabIsBusy
+  })
+
+  const showSuccess =
+    activeTab?.jobStatus === 'completed' && activeTab.progress === 100 && !activeTab.error
+  const fileLabel = settings.primaryMode === 'images' ? 'image' : 'video clip'
+  const fileLabelPlural = settings.primaryMode === 'images' ? 'images' : 'video clips'
+
+  if (!activeTab) {
+    return <div className="app">Loading...</div>
+  }
 
   return (
     <div className="app">
@@ -241,37 +275,51 @@ export default function App(): JSX.Element {
               and a WAV soundtrack. Output length matches the music.
             </p>
           </div>
-          <button
-            type="button"
-            className="reset-btn"
-            onClick={handleReset}
-            disabled={isProcessing}
-          >
+          <button type="button" className="reset-btn" onClick={handleReset}>
             Reset / Clear
           </button>
         </div>
       </header>
 
+      <JobTabs
+        tabs={tabsState.tabs}
+        activeTabId={tabsState.activeTabId}
+        onSelect={handleSelectTab}
+        onAdd={handleAddTab}
+        onClose={handleCloseTab}
+      />
+
+      {queueSnapshot.activeCount > 0 && (
+        <div className="queue-summary">
+          <strong>{queueSnapshot.activeCount}</strong> active job
+          {queueSnapshot.activeCount === 1 ? '' : 's'} in queue (processing sequentially)
+        </div>
+      )}
+
       <LivePreview
         preview={preview}
-        overlayOpacity={overlayOpacity}
+        overlayPath={settings.overlayPath}
+        overlayOpacity={settings.overlayOpacity}
         loading={previewLoading}
         error={previewError}
-        primaryMode={primaryMode}
+        primaryMode={settings.primaryMode}
       />
 
       <div className="form">
         <PrimaryModeSelector
-          value={primaryMode}
+          value={settings.primaryMode}
           onChange={handlePrimaryModeChange}
-          disabled={isProcessing}
+        />
+
+        <SceneTransitionsToggle
+          enabled={settings.sceneTransitions}
+          onChange={(enabled) => updateSettings({ sceneTransitions: enabled })}
         />
 
         <FolderPicker
-          label={primaryMode === 'images' ? 'Primary images' : 'Primary videos'}
-          path={primaryFolder}
+          label={settings.primaryMode === 'images' ? 'Primary images' : 'Primary videos'}
+          path={settings.primaryFolder}
           onBrowse={handleBrowsePrimaryFolder}
-          disabled={isProcessing}
           hint={
             primaryFiles.length > 0
               ? `${primaryFiles.length} ${primaryFiles.length === 1 ? fileLabel : fileLabelPlural} found`
@@ -289,80 +337,73 @@ export default function App(): JSX.Element {
 
         <FilePicker
           label="Intro clip"
-          path={introPath}
+          path={settings.introPath}
           onBrowse={handleBrowseIntro}
-          onClear={() => setIntroPath('')}
-          disabled={isProcessing}
+          onClear={() => updateSettings({ introPath: '' })}
           optional
         />
 
         <FilePicker
           label="Outro clip"
-          path={outroPath}
+          path={settings.outroPath}
           onBrowse={handleBrowseOutro}
-          onClear={() => setOutroPath('')}
-          disabled={isProcessing}
+          onClear={() => updateSettings({ outroPath: '' })}
           optional
         />
 
         <FilePicker
           label="Overlay video"
-          path={overlayPath}
+          path={settings.overlayPath}
           onBrowse={handleBrowseOverlay}
-          onClear={() => setOverlayPath('')}
-          disabled={isProcessing}
+          onClear={() => updateSettings({ overlayPath: '' })}
           optional
         />
 
         <OpacitySlider
-          value={overlayOpacity}
-          onChange={setOverlayOpacity}
-          disabled={isProcessing || !overlayPath}
+          value={settings.overlayOpacity}
+          onChange={(value) => updateSettings({ overlayOpacity: value })}
+          disabled={!settings.overlayPath}
         />
 
         <FilePicker
           label="Music (WAV)"
-          path={wavPath}
+          path={settings.wavPath}
           onBrowse={handleBrowseWav}
-          disabled={isProcessing}
         />
 
         <FilePicker
           label="Output file"
-          path={outputPath}
+          path={settings.outputPath}
           onBrowse={handleBrowseOutput}
-          disabled={isProcessing}
         />
 
         <EncoderSelector
-          value={encoderPreference}
-          onChange={setEncoderPreference}
+          value={settings.encoderPreference}
+          onChange={(value) => updateSettings({ encoderPreference: value })}
           detectedEncoder={detectedEncoder}
-          disabled={isProcessing}
         />
 
-        {(validationError || error) && (
-          <div className="error-banner">{validationError ?? error}</div>
+        {(validationError || activeTab.error) && (
+          <div className="error-banner">{validationError ?? activeTab.error}</div>
         )}
 
         {showSuccess && (
-          <div className="success-banner">Video saved to {outputPath}</div>
+          <div className="success-banner">Video saved to {settings.outputPath}</div>
         )}
 
-        <button
-          type="button"
-          className="generate-btn"
-          onClick={handleGenerate}
-          disabled={isProcessing}
-        >
-          {isProcessing ? 'Generating...' : 'Generate Video'}
+        <button type="button" className="generate-btn" onClick={handleGenerate}>
+          Add to Queue
         </button>
 
         <ProgressPanel
-          percent={progress}
-          message={statusMessage}
-          log={log}
-          visible={isProcessing || progress > 0}
+          percent={activeTab.progress}
+          message={activeTab.statusMessage}
+          log={activeTab.log}
+          visible={
+            activeTab.jobStatus !== 'idle' ||
+            activeTab.progress > 0 ||
+            activeTab.log.length > 0
+          }
         />
       </div>
     </div>

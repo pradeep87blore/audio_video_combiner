@@ -27,6 +27,7 @@ export interface CombineJobOptions {
   wavPath: string
   outputPath: string
   encoderPreference: EncoderPreference
+  sceneTransitions: boolean
 }
 
 export interface ProgressCallback {
@@ -89,8 +90,10 @@ function runFfmpeg(
 
 function buildScalePadFilter(width: number, height: number, fps: number): string {
   return (
-    `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-    `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=${fps}`
+    `scale=${width}:${height}:force_original_aspect_ratio=decrease:force_divisible_by=2,` +
+    `format=yuv420p,` +
+    `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
+    `fps=${fps},setsar=1`
   )
 }
 
@@ -100,7 +103,8 @@ function buildConcatFilter(
   height: number,
   fps: number,
   globalOffset: number,
-  globalSegmentCount: number
+  globalSegmentCount: number,
+  sceneTransitions: boolean
 ): { filterComplex: string; inputArgs: string[] } {
   const inputArgs: string[] = []
   const filterParts: string[] = []
@@ -117,8 +121,14 @@ function buildConcatFilter(
     let chain =
       `[${localIndex}:v]trim=duration=${segment.duration},setpts=PTS-STARTPTS,` +
       buildScalePadFilter(width, height, fps)
-    chain = appendSceneFades(chain, segment.duration, globalIndex, globalSegmentCount)
-    filterParts.push(`${chain},format=yuv420p[v${localIndex}]`)
+    chain = appendSceneFades(
+      chain,
+      segment.duration,
+      globalIndex,
+      globalSegmentCount,
+      sceneTransitions
+    )
+    filterParts.push(`${chain}[v${localIndex}]`)
   })
 
   const concatInputs = segments.map((_, index) => `[v${index}]`).join('')
@@ -141,7 +151,8 @@ async function runConcatPass(
   encoder: VideoEncoderConfig,
   onProgress: ProgressCallback,
   phaseStart: number,
-  phaseWeight: number
+  phaseWeight: number,
+  sceneTransitions: boolean
 ): Promise<void> {
   const passDuration = segments.reduce((sum, segment) => sum + segment.duration, 0)
   const { filterComplex, inputArgs } = buildConcatFilter(
@@ -150,7 +161,8 @@ async function runConcatPass(
     height,
     fps,
     globalOffset,
-    globalSegmentCount
+    globalSegmentCount,
+    sceneTransitions
   )
 
   await runFfmpeg(
@@ -208,13 +220,15 @@ async function mergeChunkVideos(
 async function concatPrimary(
   segments: ClipSegment[],
   clips: ClipInfo[],
+  bookendClips: ClipInfo[],
   tempDir: string,
   onProgress: ProgressCallback,
   isImageMode: boolean,
-  encoder: VideoEncoderConfig
+  encoder: VideoEncoderConfig,
+  sceneTransitions: boolean
 ): Promise<string> {
-  const { width, height } = getCanvasSize(clips)
-  const fps = isImageMode ? 30 : getTargetFps(clips)
+  const { width, height } = getCanvasSize([...clips, ...bookendClips])
+  const fps = isImageMode ? 30 : getTargetFps([...clips, ...bookendClips])
   const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0)
   const outputPath = join(tempDir, 'primary.mp4')
   const globalSegmentCount = segments.length
@@ -236,7 +250,8 @@ async function concatPrimary(
       encoder,
       onProgress,
       5,
-      50
+      50,
+      sceneTransitions
     )
     return outputPath
   }
@@ -262,7 +277,8 @@ async function concatPrimary(
       encoder,
       onProgress,
       5 + chunkPaths.length * passWeight,
-      passWeight
+      passWeight,
+      sceneTransitions
     )
     chunkPaths.push(chunkPath)
   }
@@ -380,10 +396,12 @@ export async function runCombineJob(
     const primaryPath = await concatPrimary(
       segments,
       clips,
+      bookendClips,
       tempDir,
       onProgress,
       isImageMode,
-      encoder
+      encoder,
+      options.sceneTransitions
     )
 
     await renderFinal(

@@ -37,13 +37,13 @@ npm run preview
 3. **Intro / Outro** (optional) — Separate video clips played at the start and end. Primary content fills the remaining music duration. Crossfades apply between all segments.
 4. **Music (WAV)** — Select a WAV file. The output video duration matches this file.
 5. **Output file** — Choose where to save the resulting MP4.
-6. Click **Generate Video**.
+6. Click **Add to Queue** to start generation. You can open multiple **job tabs** (each with its own settings), queue several videos, and they will process **one at a time**.
 
-A **live preview** appears once you select a WAV file and primary media folder. It shows a composited first frame (primary + overlay with transparency) and a timeline scaled to the music length. Moving the overlay transparency slider updates the preview instantly.
+A **live preview** appears once you select a WAV file and primary media folder. **Click the timeline** to jump to any moment and see that frame (with overlay). Use ← → keys to step through time.
 
-**Settings are saved automatically** as you change them and restored on the next launch. Use **Reset / Clear** in the header to start fresh.
+**Settings are saved automatically** per job tab and restored on the next launch. Use **Reset / Clear** in the header to start fresh. The taskbar icon shows a badge with the number of active (queued or running) jobs; it clears when the queue is empty.
 
-Scene changes use a **5-second transition** (2.5s fade to black, then 2.5s fade from black) between clips and images.
+Scene changes use a **5-second transition** (2.5s fade to black, then 2.5s fade from black) between clips and images when **Crossfade between scenes** is enabled. Uncheck it for hard cuts between segments.
 
 ## Output
 

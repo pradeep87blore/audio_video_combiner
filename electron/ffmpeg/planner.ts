@@ -70,10 +70,26 @@ export function buildImagePlaylist(imagePaths: string[], targetDuration: number)
   }))
 }
 
+export function normalizeCanvasSize(width: number, height: number): { width: number; height: number } {
+  return {
+    width: Math.max(2, Math.ceil(width / 2) * 2),
+    height: Math.max(2, Math.ceil(height / 2) * 2)
+  }
+}
+
 export function getCanvasSize(clips: ClipInfo[]): { width: number; height: number } {
-  const width = Math.max(...clips.map((c) => c.width))
-  const height = Math.max(...clips.map((c) => c.height))
-  return { width, height }
+  if (clips.length === 0) {
+    return normalizeCanvasSize(1920, 1080)
+  }
+
+  const widths = clips.map((c) => c.width).filter((w) => w > 0)
+  const heights = clips.map((c) => c.height).filter((h) => h > 0)
+
+  if (widths.length === 0 || heights.length === 0) {
+    return normalizeCanvasSize(1920, 1080)
+  }
+
+  return normalizeCanvasSize(Math.max(...widths), Math.max(...heights))
 }
 
 export function getTargetFps(clips: ClipInfo[]): number {

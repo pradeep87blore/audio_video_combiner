@@ -6,7 +6,10 @@ import type {
   EncoderInfo,
   FileFilter,
   PreviewRequest,
-  ProgressEvent
+  PreviewFrameRequest,
+  ProgressEvent,
+  QueueSnapshot,
+  TabsPersistedState
 } from '../../src/types'
 
 contextBridge.exposeInMainWorld('api', {
@@ -26,7 +29,15 @@ contextBridge.exposeInMainWorld('api', {
 
   getPreviewData: (request: PreviewRequest) => ipcRenderer.invoke('get-preview-data', request),
 
+  getPreviewFrame: (request: PreviewFrameRequest) =>
+    ipcRenderer.invoke('get-preview-frame', request),
+
   loadSettings: (): Promise<AppSettings | null> => ipcRenderer.invoke('load-settings'),
+
+  loadTabsState: (): Promise<TabsPersistedState> => ipcRenderer.invoke('load-tabs-state'),
+
+  saveTabsState: (state: TabsPersistedState): Promise<void> =>
+    ipcRenderer.invoke('save-tabs-state', state),
 
   saveSettings: (settings: AppSettings): Promise<void> =>
     ipcRenderer.invoke('save-settings', settings),
@@ -36,15 +47,28 @@ contextBridge.exposeInMainWorld('api', {
   detectEncoder: (preference: EncoderPreference): Promise<EncoderInfo> =>
     ipcRenderer.invoke('detect-encoder', preference),
 
-  combine: (options: CombineOptions): Promise<void> => ipcRenderer.invoke('combine', options),
+  enqueueCombine: (tabId: string, options: CombineOptions): Promise<string> =>
+    ipcRenderer.invoke('enqueue-combine', tabId, options),
 
-  onProgress: (callback: (event: ProgressEvent) => void): (() => void) => {
+  getQueueState: (): Promise<QueueSnapshot> => ipcRenderer.invoke('get-queue-state'),
+
+  onQueueUpdated: (callback: (snapshot: QueueSnapshot) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: QueueSnapshot): void => {
+      callback(data)
+    }
+    ipcRenderer.on('queue-updated', listener)
+    return () => {
+      ipcRenderer.removeListener('queue-updated', listener)
+    }
+  },
+
+  onQueueProgress: (callback: (event: ProgressEvent) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, data: ProgressEvent): void => {
       callback(data)
     }
-    ipcRenderer.on('progress', listener)
+    ipcRenderer.on('queue-progress', listener)
     return () => {
-      ipcRenderer.removeListener('progress', listener)
+      ipcRenderer.removeListener('queue-progress', listener)
     }
   }
 })

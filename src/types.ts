@@ -16,11 +16,46 @@ export interface CombineOptions {
   wavPath: string
   outputPath: string
   encoderPreference: EncoderPreference
+  sceneTransitions: boolean
 }
 
 export interface ProgressEvent {
   percent: number
   message: string
+  jobId?: string
+  tabId?: string
+}
+
+export type JobStatus = 'idle' | 'queued' | 'running' | 'completed' | 'failed'
+
+export interface JobTabState {
+  id: string
+  label: string
+  settings: AppSettings
+  jobStatus: JobStatus
+  progress: number
+  statusMessage: string
+  log: string[]
+  error: string | null
+}
+
+export interface TabsPersistedState {
+  activeTabId: string
+  tabs: JobTabState[]
+}
+
+export interface QueueJobSnapshot {
+  id: string
+  tabId: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  progress: number
+  message: string
+  error: string | null
+}
+
+export interface QueueSnapshot {
+  jobs: QueueJobSnapshot[]
+  activeCount: number
 }
 
 export interface PreviewSegment {
@@ -29,6 +64,7 @@ export interface PreviewSegment {
   duration: number
   start: number
   kind?: 'intro' | 'primary' | 'outro'
+  isImage?: boolean
 }
 
 export interface PreviewData {
@@ -47,6 +83,19 @@ export interface PreviewRequest {
   wavPath: string
 }
 
+export interface PreviewFrameRequest {
+  timestamp: number
+  segments: PreviewSegment[]
+  overlayPath?: string
+}
+
+export interface PreviewFrameData {
+  timestamp: number
+  primaryFrame: string
+  overlayFrame?: string
+  segmentName: string
+}
+
 export interface AppSettings {
   primaryMode: PrimaryMode
   primaryFolder: string
@@ -57,6 +106,7 @@ export interface AppSettings {
   wavPath: string
   outputPath: string
   encoderPreference: EncoderPreference
+  sceneTransitions: boolean
 }
 
 export interface EncoderInfo {
@@ -72,12 +122,17 @@ export interface CombinerAPI {
   listVideosInFolder: (folder: string) => Promise<string[]>
   listImagesInFolder: (folder: string) => Promise<string[]>
   getPreviewData: (request: PreviewRequest) => Promise<PreviewData>
+  getPreviewFrame: (request: PreviewFrameRequest) => Promise<PreviewFrameData>
   loadSettings: () => Promise<AppSettings | null>
+  loadTabsState: () => Promise<TabsPersistedState>
+  saveTabsState: (state: TabsPersistedState) => Promise<void>
   saveSettings: (settings: AppSettings) => Promise<void>
   clearSettings: () => Promise<void>
   detectEncoder: (preference: EncoderPreference) => Promise<EncoderInfo>
-  combine: (options: CombineOptions) => Promise<void>
-  onProgress: (callback: (event: ProgressEvent) => void) => () => void
+  enqueueCombine: (tabId: string, options: CombineOptions) => Promise<string>
+  getQueueState: () => Promise<QueueSnapshot>
+  onQueueUpdated: (callback: (snapshot: QueueSnapshot) => void) => () => void
+  onQueueProgress: (callback: (event: ProgressEvent) => void) => () => void
 }
 
 declare global {

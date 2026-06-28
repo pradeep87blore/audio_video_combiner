@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PreviewData } from '../types'
 import { formatDuration } from '../utils/formatDuration'
 import './LivePreview.css'
 
 interface LivePreviewProps {
   preview: PreviewData | null
+  overlayPath: string
   overlayOpacity: number
   loading: boolean
   error: string | null
@@ -22,48 +23,129 @@ const SEGMENT_COLORS = [
   '#8f4a6b'
 ]
 
+function drawCompositeFrame(
+  canvas: HTMLCanvasElement,
+  primaryFrame: string,
+  overlayFrame: string | undefined,
+  overlayOpacity: number
+): void {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const primary = new Image()
+  primary.onload = () => {
+    const maxWidth = 640
+    const scale = Math.min(1, maxWidth / primary.width)
+    const width = Math.round(primary.width * scale)
+    const height = Math.round(primary.height * scale)
+
+    canvas.width = width
+    canvas.height = height
+    ctx.clearRect(0, 0, width, height)
+    ctx.drawImage(primary, 0, 0, width, height)
+
+    if (overlayFrame) {
+      const overlay = new Image()
+      overlay.onload = () => {
+        ctx.globalAlpha = overlayOpacity / 100
+        ctx.drawImage(overlay, 0, 0, width, height)
+        ctx.globalAlpha = 1
+      }
+      overlay.src = overlayFrame
+    }
+  }
+  primary.src = primaryFrame
+}
+
 export function LivePreview({
   preview,
+  overlayPath,
   overlayOpacity,
   loading,
   error,
   primaryMode
 }: LivePreviewProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const timelineRef = useRef<HTMLDivElement>(null)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [primaryFrame, setPrimaryFrame] = useState<string | null>(null)
+  const [overlayFrame, setOverlayFrame] = useState<string | undefined>()
+  const [segmentName, setSegmentName] = useState('')
+  const [frameLoading, setFrameLoading] = useState(false)
+  const [frameError, setFrameError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!preview) {
+      setCurrentTime(0)
+      setPrimaryFrame(null)
+      setOverlayFrame(undefined)
+      setSegmentName('')
+      return
+    }
+
+    setCurrentTime(0)
+    setPrimaryFrame(preview.primaryFrame)
+    setOverlayFrame(preview.overlayFrame)
+    setSegmentName(preview.segments[0]?.name ?? '')
+    setFrameError(null)
+  }, [preview])
 
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || !preview?.primaryFrame) return
+    if (!canvas || !primaryFrame) return
+    drawCompositeFrame(canvas, primaryFrame, overlayFrame, overlayOpacity)
+  }, [primaryFrame, overlayFrame, overlayOpacity])
 
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+  const seekTo = useCallback(
+    async (timestamp: number) => {
+      if (!preview) return
 
-    const primary = new Image()
-    primary.onload = () => {
-      const maxWidth = 640
-      const scale = Math.min(1, maxWidth / primary.width)
-      const width = Math.round(primary.width * scale)
-      const height = Math.round(primary.height * scale)
+      const clamped = Math.max(0, Math.min(timestamp, preview.duration))
+      setCurrentTime(clamped)
+      setFrameLoading(true)
+      setFrameError(null)
 
-      canvas.width = width
-      canvas.height = height
-      ctx.clearRect(0, 0, width, height)
-      ctx.drawImage(primary, 0, 0, width, height)
-
-      if (preview.overlayFrame) {
-        const overlay = new Image()
-        overlay.onload = () => {
-          ctx.globalAlpha = overlayOpacity / 100
-          ctx.drawImage(overlay, 0, 0, width, height)
-          ctx.globalAlpha = 1
-        }
-        overlay.src = preview.overlayFrame
+      try {
+        const frame = await window.api.getPreviewFrame({
+          timestamp: clamped,
+          segments: preview.segments,
+          overlayPath: overlayPath || undefined
+        })
+        setPrimaryFrame(frame.primaryFrame)
+        setOverlayFrame(frame.overlayFrame)
+        setSegmentName(frame.segmentName)
+      } catch (err) {
+        setFrameError(err instanceof Error ? err.message : 'Failed to load frame')
+      } finally {
+        setFrameLoading(false)
       }
+    },
+    [preview, overlayPath]
+  )
+
+  const handleTimelineClick = (event: React.MouseEvent<HTMLDivElement>): void => {
+    if (!preview || !timelineRef.current) return
+
+    const rect = timelineRef.current.getBoundingClientRect()
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width))
+    void seekTo(ratio * preview.duration)
+  }
+
+  const handleTimelineKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (!preview) return
+
+    const step = event.shiftKey ? 5 : 1
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      void seekTo(currentTime - step)
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      void seekTo(currentTime + step)
     }
-    primary.src = preview.primaryFrame
-  }, [preview?.primaryFrame, preview?.overlayFrame, overlayOpacity])
+  }
 
   const hasInputs = Boolean(preview) || loading || error
+  const playheadPercent = preview ? (currentTime / preview.duration) * 100 : 0
 
   if (!hasInputs) {
     return (
@@ -78,18 +160,30 @@ export function LivePreview({
       <div className="live-preview-header">
         <h2>Live preview</h2>
         {preview && (
-          <span className="preview-duration">Total: {formatDuration(preview.duration)}</span>
+          <span className="preview-duration">
+            {formatDuration(currentTime)} / {formatDuration(preview.duration)}
+          </span>
         )}
       </div>
 
       <div className="preview-frame-wrap">
-        {loading && <div className="preview-overlay-status">Updating preview...</div>}
-        {error && !loading && <div className="preview-overlay-status preview-error">{error}</div>}
+        {(loading || frameLoading) && (
+          <div className="preview-overlay-status">Updating preview...</div>
+        )}
+        {(error || frameError) && !loading && !frameLoading && (
+          <div className="preview-overlay-status preview-error">{error ?? frameError}</div>
+        )}
         <canvas ref={canvasRef} className="preview-canvas" />
-        {!preview?.primaryFrame && !loading && !error && (
+        {!primaryFrame && !loading && !error && (
           <div className="preview-placeholder">No frame available</div>
         )}
       </div>
+
+      {segmentName && (
+        <p className="preview-segment-name" title={segmentName}>
+          {segmentName}
+        </p>
+      )}
 
       {preview && (
         <>
@@ -97,7 +191,18 @@ export function LivePreview({
             <span>0:00</span>
             <span>{formatDuration(preview.duration)}</span>
           </div>
-          <div className="timeline-track" title="Sample timeline — actual clip order is random">
+          <div
+            ref={timelineRef}
+            className="timeline-track timeline-track-interactive"
+            role="slider"
+            tabIndex={0}
+            aria-label="Preview timeline"
+            aria-valuemin={0}
+            aria-valuemax={preview.duration}
+            aria-valuenow={currentTime}
+            onClick={handleTimelineClick}
+            onKeyDown={handleTimelineKeyDown}
+          >
             {preview.segments.map((segment, index) => {
               const widthPercent = (segment.duration / preview.duration) * 100
               const color =
@@ -121,13 +226,14 @@ export function LivePreview({
                 </div>
               )
             })}
+            <div className="timeline-playhead" style={{ left: `${playheadPercent}%` }} />
           </div>
           <p className="timeline-hint">
+            Click anywhere on the timeline to preview that moment. Use ← → to step by 1s (Shift+arrow for 5s).
             {primaryMode === 'images'
-              ? 'Sample image order (shuffled). Each image gets equal time.'
-              : 'Sample clip order (shuffled). Clips loop until the music ends.'}
-            {' Intro/outro clips bookend the timeline when selected.'}
-            {preview.overlayFrame && ` Overlay opacity: ${overlayOpacity}%.`}
+              ? ' Sample image order (shuffled).'
+              : ' Sample clip order (shuffled).'}
+            {overlayPath && ` Overlay opacity: ${overlayOpacity}%.`}
           </p>
         </>
       )}

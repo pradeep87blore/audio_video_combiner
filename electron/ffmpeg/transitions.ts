@@ -22,8 +22,13 @@ export function appendSceneFades(
   filterChain: string,
   segmentDuration: number,
   index: number,
-  segmentCount: number
+  segmentCount: number,
+  enabled = true
 ): string {
+  if (!enabled) {
+    return filterChain
+  }
+
   const { fadeIn, fadeOut } = getSceneFadeDurations(segmentDuration, index, segmentCount)
   let chain = filterChain
 

@@ -77,6 +77,15 @@
   text-align: center;
 }
 
+.preview-segment-name {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: #a8b2d1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .timeline-labels {
   display: flex;
   justify-content: space-between;
@@ -86,6 +95,7 @@
 }
 
 .timeline-track {
+  position: relative;
   display: flex;
   height: 36px;
   border-radius: 6px;
@@ -94,7 +104,41 @@
   border: 1px solid #2a2a4a;
 }
 
+.timeline-track-interactive {
+  cursor: pointer;
+}
+
+.timeline-track-interactive:focus {
+  outline: 2px solid #64ffda;
+  outline-offset: 2px;
+}
+
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #64ffda;
+  box-shadow: 0 0 6px rgba(100, 255, 218, 0.8);
+  transform: translateX(-1px);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.timeline-playhead::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid #64ffda;
+}
+
 .timeline-segment {
+  pointer-events: none;
+}
   display: flex;
   align-items: center;
   justify-content: center;

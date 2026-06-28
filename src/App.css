@@ -250,3 +250,24 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.875rem;
+  color: #ccd6f6;
+  cursor: pointer;
+}
+
+.checkbox-field input {
+  width: 16px;
+  height: 16px;
+  accent-color: #64ffda;
+  cursor: pointer;
+}
+
+.checkbox-field:has(input:disabled) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

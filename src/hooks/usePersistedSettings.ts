@@ -10,7 +10,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   overlayOpacity: 50,
   wavPath: '',
   outputPath: '',
-  encoderPreference: 'auto'
+  encoderPreference: 'auto',
+  sceneTransitions: true
 }
 
 export function useSettingsHydration(onHydrate: (settings: AppSettings) => void): boolean {
@@ -52,6 +53,7 @@ export function buildAppSettings(state: {
   wavPath: string
   outputPath: string
   encoderPreference: AppSettings['encoderPreference']
+  sceneTransitions: boolean
 }): AppSettings {
   return { ...state }
 }

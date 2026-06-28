@@ -1,9 +1,10 @@
 import { spawn } from 'child_process'
-import { basename } from 'path'
+import { extname, basename } from 'path'
 import { getFfmpegPath } from './paths'
 import { probeMedia, probeWavDuration } from './probe'
 import { buildCompleteSegments } from './bookends'
 import { buildClipInfos, buildImageInfos } from './clip-info'
+import { IMAGE_EXTENSIONS } from '../../src/types'
 
 export interface PreviewSegment {
   path: string
@@ -11,6 +12,7 @@ export interface PreviewSegment {
   duration: number
   start: number
   kind?: 'intro' | 'primary' | 'outro'
+  isImage?: boolean
 }
 
 export interface PreviewData {
@@ -29,17 +31,49 @@ export interface PreviewRequest {
   wavPath: string
 }
 
-function extractFrameToDataUrl(filePath: string): Promise<string> {
+export interface PreviewFrameRequest {
+  timestamp: number
+  segments: PreviewSegment[]
+  overlayPath?: string
+}
+
+export interface PreviewFrameData {
+  timestamp: number
+  primaryFrame: string
+  overlayFrame?: string
+  segmentName: string
+}
+
+function isImagePath(filePath: string): boolean {
+  return IMAGE_EXTENSIONS.includes(extname(filePath).toLowerCase())
+}
+
+function extractFrameToDataUrl(
+  filePath: string,
+  seekSeconds = 0,
+  isImage = false
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
-    const proc = spawn(
-      getFfmpegPath(),
-      ['-i', filePath, '-vframes', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1'],
-      { windowsHide: true }
-    )
+    const args = isImage
+      ? ['-i', filePath, '-vframes', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1']
+      : [
+          '-ss',
+          String(Math.max(0, seekSeconds)),
+          '-i',
+          filePath,
+          '-vframes',
+          '1',
+          '-f',
+          'image2pipe',
+          '-vcodec',
+          'png',
+          'pipe:1'
+        ]
+
+    const proc = spawn(getFfmpegPath(), args, { windowsHide: true })
 
     proc.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
-
     proc.stderr.on('data', () => {})
 
     proc.on('close', (code) => {
@@ -55,8 +89,57 @@ function extractFrameToDataUrl(filePath: string): Promise<string> {
   })
 }
 
+function findSegmentAtTime(segments: PreviewSegment[], time: number): PreviewSegment {
+  if (segments.length === 0) {
+    throw new Error('No timeline segments available')
+  }
+
+  const totalDuration = segments.reduce((sum, segment) => sum + segment.duration, 0)
+  const clamped = Math.max(0, Math.min(time, Math.max(0, totalDuration - 0.001)))
+
+  for (const segment of segments) {
+    if (clamped >= segment.start && clamped < segment.start + segment.duration) {
+      return segment
+    }
+  }
+
+  return segments[segments.length - 1]
+}
+
+async function extractOverlayFrameAtTime(
+  overlayPath: string,
+  globalTime: number
+): Promise<string> {
+  const info = await probeMedia(overlayPath)
+  if (!info.duration || info.duration <= 0) {
+    return extractFrameToDataUrl(overlayPath, 0, false)
+  }
+  const overlayTime = globalTime % info.duration
+  return extractFrameToDataUrl(overlayPath, overlayTime, false)
+}
+
+export async function extractPreviewFrame(
+  request: PreviewFrameRequest
+): Promise<PreviewFrameData> {
+  const segment = findSegmentAtTime(request.segments, request.timestamp)
+  const localTime = request.timestamp - segment.start
+  const isImage = segment.isImage ?? isImagePath(segment.path)
+
+  const primaryFrame = await extractFrameToDataUrl(segment.path, localTime, isImage)
+  const overlayFrame = request.overlayPath
+    ? await extractOverlayFrameAtTime(request.overlayPath, request.timestamp)
+    : undefined
+
+  return {
+    timestamp: request.timestamp,
+    primaryFrame,
+    overlayFrame,
+    segmentName: segment.name
+  }
+}
+
 function segmentsToTimeline(
-  segments: { path: string; duration: number }[],
+  segments: { path: string; duration: number; isImage?: boolean }[],
   introPath?: string,
   outroPath?: string
 ): PreviewSegment[] {
@@ -76,7 +159,8 @@ function segmentsToTimeline(
       name: basename(segment.path),
       duration: segment.duration,
       start,
-      kind
+      kind,
+      isImage: segment.isImage
     })
     start += segment.duration
   }
@@ -101,20 +185,17 @@ export async function buildPreviewData(request: PreviewRequest): Promise<Preview
     outroPath: request.outroPath
   })
 
-  const previewPath =
-    (request.introPath && segments[0]?.path === request.introPath
-      ? request.introPath
-      : segments[0]?.path) ?? request.primaryPaths[0]
-
-  const primaryFrame = await extractFrameToDataUrl(previewPath)
-  const overlayFrame = request.overlayPath
-    ? await extractFrameToDataUrl(request.overlayPath)
-    : undefined
+  const timeline = segmentsToTimeline(segments, request.introPath, request.outroPath)
+  const frame = await extractPreviewFrame({
+    timestamp: 0,
+    segments: timeline,
+    overlayPath: request.overlayPath
+  })
 
   return {
     duration,
-    primaryFrame,
-    overlayFrame,
-    segments: segmentsToTimeline(segments, request.introPath, request.outroPath)
+    primaryFrame: frame.primaryFrame,
+    overlayFrame: frame.overlayFrame,
+    segments: timeline
   }
 }
