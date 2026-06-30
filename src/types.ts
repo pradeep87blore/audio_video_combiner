@@ -6,13 +6,31 @@ export interface FileFilter {
 export type PrimaryMode = 'videos' | 'images'
 export type EncoderPreference = 'auto' | 'gpu' | 'cpu'
 
+export interface OverlayLayer {
+  id: string
+  path: string
+  opacity: number
+  /** Horizontal position as percentage of canvas width (0 = left edge). */
+  x: number
+  /** Vertical position as percentage of canvas height (0 = top edge). */
+  y: number
+  /** Width as percentage of canvas width. */
+  width: number
+  /** Height as percentage of canvas height. */
+  height: number
+}
+
+export interface PreviewOverlayFrame {
+  id: string
+  frame: string
+}
+
 export interface CombineOptions {
   primaryFolder: string
   primaryMode: PrimaryMode
   introPath?: string
   outroPath?: string
-  overlayPath?: string
-  overlayOpacity: number
+  overlays: OverlayLayer[]
   wavPath: string
   outputPath: string
   encoderPreference: EncoderPreference
@@ -70,7 +88,7 @@ export interface PreviewSegment {
 export interface PreviewData {
   duration: number
   primaryFrame: string
-  overlayFrame?: string
+  overlayFrames: PreviewOverlayFrame[]
   segments: PreviewSegment[]
 }
 
@@ -79,20 +97,20 @@ export interface PreviewRequest {
   primaryPaths: string[]
   introPath?: string
   outroPath?: string
-  overlayPath?: string
+  overlays: OverlayLayer[]
   wavPath: string
 }
 
 export interface PreviewFrameRequest {
   timestamp: number
   segments: PreviewSegment[]
-  overlayPath?: string
+  overlays: OverlayLayer[]
 }
 
 export interface PreviewFrameData {
   timestamp: number
   primaryFrame: string
-  overlayFrame?: string
+  overlayFrames: PreviewOverlayFrame[]
   segmentName: string
 }
 
@@ -101,8 +119,7 @@ export interface AppSettings {
   primaryFolder: string
   introPath: string
   outroPath: string
-  overlayPath: string
-  overlayOpacity: number
+  overlays: OverlayLayer[]
   wavPath: string
   outputPath: string
   encoderPreference: EncoderPreference

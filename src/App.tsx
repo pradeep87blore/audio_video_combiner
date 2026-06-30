@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FilePicker } from './components/FilePicker'
 import { FolderPicker } from './components/FolderPicker'
-import { OpacitySlider } from './components/OpacitySlider'
+import { OverlayList } from './components/OverlayList'
 import { PrimaryModeSelector } from './components/PrimaryModeSelector'
 import { SceneTransitionsToggle } from './components/SceneTransitionsToggle'
 import { EncoderSelector } from './components/EncoderSelector'
@@ -181,16 +181,6 @@ export default function App(): JSX.Element {
     }
   }
 
-  const handleBrowseOverlay = async (): Promise<void> => {
-    const file = await window.api.selectFile([
-      { name: 'Video', extensions: ['mp4', 'mov', 'mkv', 'avi', 'webm'] }
-    ])
-    if (file) {
-      updateSettings({ overlayPath: file })
-      setValidationError(null)
-    }
-  }
-
   const handleBrowseWav = async (): Promise<void> => {
     const file = await window.api.selectFile([{ name: 'WAV Audio', extensions: ['wav'] }])
     if (file) {
@@ -250,7 +240,7 @@ export default function App(): JSX.Element {
     primaryFiles,
     introPath: settings.introPath,
     outroPath: settings.outroPath,
-    overlayPath: settings.overlayPath,
+    overlays: settings.overlays,
     wavPath: settings.wavPath,
     enabled: hydrated && !!activeTab && !tabIsBusy
   })
@@ -271,8 +261,8 @@ export default function App(): JSX.Element {
           <div>
             <h1>Audio Video Combiner</h1>
             <p>
-              Combine primary video clips or static images with an optional semi-transparent overlay
-              and a WAV soundtrack. Output length matches the music.
+              Combine primary video clips or static images with optional semi-transparent overlay
+              videos and a WAV soundtrack. Output length matches the music.
             </p>
           </div>
           <button type="button" className="reset-btn" onClick={handleReset}>
@@ -298,8 +288,7 @@ export default function App(): JSX.Element {
 
       <LivePreview
         preview={preview}
-        overlayPath={settings.overlayPath}
-        overlayOpacity={settings.overlayOpacity}
+        overlays={settings.overlays}
         loading={previewLoading}
         error={previewError}
         primaryMode={settings.primaryMode}
@@ -351,18 +340,9 @@ export default function App(): JSX.Element {
           optional
         />
 
-        <FilePicker
-          label="Overlay video"
-          path={settings.overlayPath}
-          onBrowse={handleBrowseOverlay}
-          onClear={() => updateSettings({ overlayPath: '' })}
-          optional
-        />
-
-        <OpacitySlider
-          value={settings.overlayOpacity}
-          onChange={(value) => updateSettings({ overlayOpacity: value })}
-          disabled={!settings.overlayPath}
+        <OverlayList
+          overlays={settings.overlays}
+          onChange={(overlays) => updateSettings({ overlays })}
         />
 
         <FilePicker

@@ -3,6 +3,7 @@ import { readFile, writeFile, unlink } from 'fs/promises'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type { AppSettings, JobTabState, TabsPersistedState } from '../src/types'
+import { migrateAppSettings } from '../src/utils/overlay'
 
 const SETTINGS_FILE = 'app-settings.json'
 const TABS_FILE = 'job-tabs.json'
@@ -16,8 +17,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   primaryFolder: '',
   introPath: '',
   outroPath: '',
-  overlayPath: '',
-  overlayOpacity: 50,
+  overlays: [],
   wavPath: '',
   outputPath: '',
   encoderPreference: 'auto',
@@ -76,6 +76,7 @@ export async function loadTabsState(): Promise<TabsPersistedState> {
       activeTabId: parsed.activeTabId,
       tabs: parsed.tabs.map((tab) => ({
         ...tab,
+        settings: migrateAppSettings(tab.settings as Partial<AppSettings> & Record<string, unknown>),
         jobStatus: 'idle' as const,
         progress: 0,
         statusMessage: '',
@@ -88,7 +89,7 @@ export async function loadTabsState(): Promise<TabsPersistedState> {
     if (legacy) {
       const tab = createTab({
         label: labelFromOutput(legacy.outputPath, 'Job 1'),
-        settings: { ...DEFAULT_SETTINGS, ...legacy }
+        settings: migrateAppSettings(legacy as Partial<AppSettings> & Record<string, unknown>)
       })
       return { activeTabId: tab.id, tabs: [tab] }
     }

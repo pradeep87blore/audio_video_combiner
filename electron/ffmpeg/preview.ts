@@ -5,6 +5,7 @@ import { probeMedia, probeWavDuration } from './probe'
 import { buildCompleteSegments } from './bookends'
 import { buildClipInfos, buildImageInfos } from './clip-info'
 import { IMAGE_EXTENSIONS } from '../../src/types'
+import type { OverlayLayer } from '../../src/types'
 
 export interface PreviewSegment {
   path: string
@@ -15,10 +16,15 @@ export interface PreviewSegment {
   isImage?: boolean
 }
 
+export interface PreviewOverlayFrame {
+  id: string
+  frame: string
+}
+
 export interface PreviewData {
   duration: number
   primaryFrame: string
-  overlayFrame?: string
+  overlayFrames: PreviewOverlayFrame[]
   segments: PreviewSegment[]
 }
 
@@ -27,20 +33,20 @@ export interface PreviewRequest {
   primaryPaths: string[]
   introPath?: string
   outroPath?: string
-  overlayPath?: string
+  overlays: OverlayLayer[]
   wavPath: string
 }
 
 export interface PreviewFrameRequest {
   timestamp: number
   segments: PreviewSegment[]
-  overlayPath?: string
+  overlays: OverlayLayer[]
 }
 
 export interface PreviewFrameData {
   timestamp: number
   primaryFrame: string
-  overlayFrame?: string
+  overlayFrames: PreviewOverlayFrame[]
   segmentName: string
 }
 
@@ -118,6 +124,21 @@ async function extractOverlayFrameAtTime(
   return extractFrameToDataUrl(overlayPath, overlayTime, false)
 }
 
+async function extractOverlayFramesAtTime(
+  overlays: OverlayLayer[],
+  globalTime: number
+): Promise<PreviewOverlayFrame[]> {
+  const frames: PreviewOverlayFrame[] = []
+
+  for (const overlay of overlays) {
+    if (!overlay.path) continue
+    const frame = await extractOverlayFrameAtTime(overlay.path, globalTime)
+    frames.push({ id: overlay.id, frame })
+  }
+
+  return frames
+}
+
 export async function extractPreviewFrame(
   request: PreviewFrameRequest
 ): Promise<PreviewFrameData> {
@@ -126,14 +147,12 @@ export async function extractPreviewFrame(
   const isImage = segment.isImage ?? isImagePath(segment.path)
 
   const primaryFrame = await extractFrameToDataUrl(segment.path, localTime, isImage)
-  const overlayFrame = request.overlayPath
-    ? await extractOverlayFrameAtTime(request.overlayPath, request.timestamp)
-    : undefined
+  const overlayFrames = await extractOverlayFramesAtTime(request.overlays, request.timestamp)
 
   return {
     timestamp: request.timestamp,
     primaryFrame,
-    overlayFrame,
+    overlayFrames,
     segmentName: segment.name
   }
 }
@@ -189,13 +208,13 @@ export async function buildPreviewData(request: PreviewRequest): Promise<Preview
   const frame = await extractPreviewFrame({
     timestamp: 0,
     segments: timeline,
-    overlayPath: request.overlayPath
+    overlays: request.overlays
   })
 
   return {
     duration,
     primaryFrame: frame.primaryFrame,
-    overlayFrame: frame.overlayFrame,
+    overlayFrames: frame.overlayFrames,
     segments: timeline
   }
 }

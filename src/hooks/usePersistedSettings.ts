@@ -6,8 +6,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   primaryFolder: '',
   introPath: '',
   outroPath: '',
-  overlayPath: '',
-  overlayOpacity: 50,
+  overlays: [],
   wavPath: '',
   outputPath: '',
   encoderPreference: 'auto',
@@ -43,17 +42,6 @@ export function useAutoSaveSettings(settings: AppSettings, enabled: boolean): vo
   }, [enabled, settings])
 }
 
-export function buildAppSettings(state: {
-  primaryMode: AppSettings['primaryMode']
-  primaryFolder: string
-  introPath: string
-  outroPath: string
-  overlayPath: string
-  overlayOpacity: number
-  wavPath: string
-  outputPath: string
-  encoderPreference: AppSettings['encoderPreference']
-  sceneTransitions: boolean
-}): AppSettings {
+export function buildAppSettings(state: AppSettings): AppSettings {
   return { ...state }
 }

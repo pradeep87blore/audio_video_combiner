@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { PreviewData } from '../types'
+import type { OverlayLayer, PreviewData, PreviewOverlayFrame } from '../types'
+import { activeOverlays, overlayRect } from '../utils/overlay'
 import { formatDuration } from '../utils/formatDuration'
 import './LivePreview.css'
 
 interface LivePreviewProps {
   preview: PreviewData | null
-  overlayPath: string
-  overlayOpacity: number
+  overlays: OverlayLayer[]
   loading: boolean
   error: string | null
   primaryMode: 'videos' | 'images'
@@ -26,8 +26,8 @@ const SEGMENT_COLORS = [
 function drawCompositeFrame(
   canvas: HTMLCanvasElement,
   primaryFrame: string,
-  overlayFrame: string | undefined,
-  overlayOpacity: number
+  overlays: OverlayLayer[],
+  overlayFrames: PreviewOverlayFrame[]
 ): void {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
@@ -44,14 +44,25 @@ function drawCompositeFrame(
     ctx.clearRect(0, 0, width, height)
     ctx.drawImage(primary, 0, 0, width, height)
 
-    if (overlayFrame) {
+    const frameById = new Map(overlayFrames.map((entry) => [entry.id, entry.frame]))
+    const layers = activeOverlays(overlays)
+
+    let pending = layers.filter((layer) => frameById.has(layer.id)).length
+    if (pending === 0) return
+
+    for (const layer of layers) {
+      const frame = frameById.get(layer.id)
+      if (!frame) continue
+
       const overlay = new Image()
       overlay.onload = () => {
-        ctx.globalAlpha = overlayOpacity / 100
-        ctx.drawImage(overlay, 0, 0, width, height)
+        const rect = overlayRect(width, height, layer)
+        ctx.globalAlpha = layer.opacity / 100
+        ctx.drawImage(overlay, rect.x, rect.y, rect.width, rect.height)
         ctx.globalAlpha = 1
+        pending -= 1
       }
-      overlay.src = overlayFrame
+      overlay.src = frame
     }
   }
   primary.src = primaryFrame
@@ -59,8 +70,7 @@ function drawCompositeFrame(
 
 export function LivePreview({
   preview,
-  overlayPath,
-  overlayOpacity,
+  overlays,
   loading,
   error,
   primaryMode
@@ -69,7 +79,7 @@ export function LivePreview({
   const timelineRef = useRef<HTMLDivElement>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [primaryFrame, setPrimaryFrame] = useState<string | null>(null)
-  const [overlayFrame, setOverlayFrame] = useState<string | undefined>()
+  const [overlayFrames, setOverlayFrames] = useState<PreviewOverlayFrame[]>([])
   const [segmentName, setSegmentName] = useState('')
   const [frameLoading, setFrameLoading] = useState(false)
   const [frameError, setFrameError] = useState<string | null>(null)
@@ -78,14 +88,14 @@ export function LivePreview({
     if (!preview) {
       setCurrentTime(0)
       setPrimaryFrame(null)
-      setOverlayFrame(undefined)
+      setOverlayFrames([])
       setSegmentName('')
       return
     }
 
     setCurrentTime(0)
     setPrimaryFrame(preview.primaryFrame)
-    setOverlayFrame(preview.overlayFrame)
+    setOverlayFrames(preview.overlayFrames)
     setSegmentName(preview.segments[0]?.name ?? '')
     setFrameError(null)
   }, [preview])
@@ -93,8 +103,8 @@ export function LivePreview({
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || !primaryFrame) return
-    drawCompositeFrame(canvas, primaryFrame, overlayFrame, overlayOpacity)
-  }, [primaryFrame, overlayFrame, overlayOpacity])
+    drawCompositeFrame(canvas, primaryFrame, overlays, overlayFrames)
+  }, [primaryFrame, overlays, overlayFrames])
 
   const seekTo = useCallback(
     async (timestamp: number) => {
@@ -109,10 +119,10 @@ export function LivePreview({
         const frame = await window.api.getPreviewFrame({
           timestamp: clamped,
           segments: preview.segments,
-          overlayPath: overlayPath || undefined
+          overlays: activeOverlays(overlays)
         })
         setPrimaryFrame(frame.primaryFrame)
-        setOverlayFrame(frame.overlayFrame)
+        setOverlayFrames(frame.overlayFrames)
         setSegmentName(frame.segmentName)
       } catch (err) {
         setFrameError(err instanceof Error ? err.message : 'Failed to load frame')
@@ -120,7 +130,7 @@ export function LivePreview({
         setFrameLoading(false)
       }
     },
-    [preview, overlayPath]
+    [preview, overlays]
   )
 
   const handleTimelineClick = (event: React.MouseEvent<HTMLDivElement>): void => {
@@ -146,6 +156,7 @@ export function LivePreview({
 
   const hasInputs = Boolean(preview) || loading || error
   const playheadPercent = preview ? (currentTime / preview.duration) * 100 : 0
+  const activeOverlayCount = activeOverlays(overlays).length
 
   if (!hasInputs) {
     return (
@@ -233,7 +244,8 @@ export function LivePreview({
             {primaryMode === 'images'
               ? ' Sample image order (shuffled).'
               : ' Sample clip order (shuffled).'}
-            {overlayPath && ` Overlay opacity: ${overlayOpacity}%.`}
+            {activeOverlayCount > 0 &&
+              ` ${activeOverlayCount} overlay${activeOverlayCount === 1 ? '' : 's'} active.`}
           </p>
         </>
       )}

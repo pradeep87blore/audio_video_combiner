@@ -15,6 +15,7 @@ import {
 } from './planner'
 import { buildCompleteSegments } from './bookends'
 import { buildClipInfos, buildImageInfos } from './clip-info'
+import type { OverlayLayer } from '../../src/types'
 
 export interface CombineJobOptions {
   primaryFolder: string
@@ -22,8 +23,7 @@ export interface CombineJobOptions {
   primaryPaths: string[]
   introPath?: string
   outroPath?: string
-  overlayPath?: string
-  overlayOpacity: number
+  overlays: OverlayLayer[]
   wavPath: string
   outputPath: string
   encoderPreference: EncoderPreference
@@ -298,6 +298,38 @@ async function concatPrimary(
   return outputPath
 }
 
+function buildOverlayFilterChain(
+  overlays: OverlayLayer[],
+  canvasWidth: number,
+  canvasHeight: number,
+  targetDuration: number
+): string {
+  const activeOverlays = overlays.filter((overlay) => overlay.path)
+  const filterParts: string[] = []
+  let currentLabel = '[0:v]'
+
+  activeOverlays.forEach((overlay, index) => {
+    const inputIndex = index + 1
+    const opacity = Math.max(0, Math.min(1, overlay.opacity / 100))
+    const targetWidth = Math.max(2, Math.round((canvasWidth * overlay.width) / 100))
+    const targetHeight = Math.max(2, Math.round((canvasHeight * overlay.height) / 100))
+    const posX = Math.round((canvasWidth * overlay.x) / 100)
+    const posY = Math.round((canvasHeight * overlay.y) / 100)
+    const ovlLabel = `[ovl${index}]`
+    const outLabel = index === activeOverlays.length - 1 ? '[outv]' : `[tmp${index}]`
+
+    filterParts.push(
+      `[${inputIndex}:v]loop=-1:size=32767:start=0,trim=duration=${targetDuration},setpts=PTS-STARTPTS,` +
+        `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,` +
+        `format=rgba,colorchannelmixer=aa=${opacity.toFixed(4)}${ovlLabel}`
+    )
+    filterParts.push(`${currentLabel}${ovlLabel}overlay=${posX}:${posY}:format=auto${outLabel}`)
+    currentLabel = outLabel
+  })
+
+  return filterParts.join(';')
+}
+
 async function renderFinal(
   primaryPath: string,
   wavPath: string,
@@ -305,31 +337,27 @@ async function renderFinal(
   targetDuration: number,
   canvasWidth: number,
   canvasHeight: number,
-  overlayPath: string | undefined,
-  overlayOpacity: number,
+  overlays: OverlayLayer[],
   onProgress: ProgressCallback,
   encoder: VideoEncoderConfig
 ): Promise<void> {
   onProgress(60, 'Rendering final output...')
 
-  const opacity = Math.max(0, Math.min(1, overlayOpacity / 100))
+  const activeOverlays = overlays.filter((overlay) => overlay.path)
   const args: string[] = ['-i', primaryPath]
 
-  let filterComplex: string | undefined
-
-  if (overlayPath) {
-    args.push('-i', overlayPath)
-    filterComplex =
-      `[1:v]loop=-1:size=32767:start=0,trim=duration=${targetDuration},setpts=PTS-STARTPTS,` +
-      `scale=${canvasWidth}:${canvasHeight}:force_original_aspect_ratio=decrease,` +
-      `pad=${canvasWidth}:${canvasHeight}:(ow-iw)/2:(oh-ih)/2,` +
-      `format=rgba,colorchannelmixer=aa=${opacity.toFixed(4)}[ovl];` +
-      `[0:v][ovl]overlay=0:0:format=auto[outv]`
+  for (const overlay of activeOverlays) {
+    args.push('-i', overlay.path)
   }
+
+  const filterComplex =
+    activeOverlays.length > 0
+      ? buildOverlayFilterChain(activeOverlays, canvasWidth, canvasHeight, targetDuration)
+      : undefined
 
   args.push('-i', wavPath)
 
-  const audioInputIndex = overlayPath ? 2 : 1
+  const audioInputIndex = 1 + activeOverlays.length
 
   if (filterComplex) {
     args.push('-filter_complex', filterComplex, '-map', '[outv]')
@@ -375,10 +403,15 @@ export async function runCombineJob(
       ? await buildImageInfos(options.primaryPaths)
       : await buildClipInfos(options.primaryPaths)
 
-    if (options.overlayPath) {
-      const overlayInfo = await probeMedia(options.overlayPath)
-      if (!overlayInfo.hasVideo) {
-        throw new Error('Overlay file does not contain a video stream')
+    if (options.overlays.length > 0) {
+      for (const overlay of options.overlays) {
+        if (!overlay.path) continue
+        const overlayInfo = await probeMedia(overlay.path)
+        if (!overlayInfo.hasVideo) {
+          throw new Error(
+            `Overlay "${overlay.path.split(/[/\\]/).pop()}" does not contain a video stream`
+          )
+        }
       }
     }
 
@@ -411,8 +444,7 @@ export async function runCombineJob(
       targetDuration,
       width,
       height,
-      options.overlayPath,
-      options.overlayOpacity,
+      options.overlays,
       onProgress,
       encoder
     )
