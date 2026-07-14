@@ -1,5 +1,11 @@
 import type { OverlayLayer } from '../types'
-import { createOverlayLayer } from '../utils/overlay'
+import {
+  applyLockedSizeChange,
+  centerOverlayBoth,
+  centerOverlayHorizontally,
+  centerOverlayVertically,
+  createOverlayLayer
+} from '../utils/overlay'
 import { OpacitySlider } from './OpacitySlider'
 import './OverlayList.css'
 
@@ -45,16 +51,24 @@ export function OverlayList({ overlays, onChange, disabled }: OverlayListProps):
   }
 
   const handlePlacementChange = (
-    id: string,
+    overlay: OverlayLayer,
     field: 'x' | 'y' | 'width' | 'height',
     rawValue: string
   ): void => {
     const value = Number(rawValue)
-    const clamped =
-      field === 'width' || field === 'height'
-        ? Math.max(1, clampPercent(value))
-        : clampPercent(value)
-    onChange(updateOverlay(overlays, id, { [field]: clamped }))
+
+    if (field === 'x' || field === 'y') {
+      onChange(updateOverlay(overlays, overlay.id, { [field]: clampPercent(value) }))
+      return
+    }
+
+    const next = Math.max(1, clampPercent(value))
+    if (overlay.lockAspectRatio) {
+      onChange(updateOverlay(overlays, overlay.id, applyLockedSizeChange(overlay, field, next)))
+      return
+    }
+
+    onChange(updateOverlay(overlays, overlay.id, { [field]: next }))
   }
 
   return (
@@ -117,6 +131,21 @@ export function OverlayList({ overlays, onChange, disabled }: OverlayListProps):
             disabled={disabled || !overlay.path}
           />
 
+          <label className="checkbox-field overlay-remove-black">
+            <input
+              type="checkbox"
+              checked={overlay.removeBlack}
+              onChange={(e) =>
+                onChange(updateOverlay(overlays, overlay.id, { removeBlack: e.target.checked }))
+              }
+              disabled={disabled || !overlay.path}
+            />
+            Remove black background
+          </label>
+          <p className="overlay-placement-hint overlay-remove-black-hint">
+            Turns black or near-black pixels transparent so logos and text sit cleanly on the video.
+          </p>
+
           <div className="overlay-placement">
             <span className="overlay-placement-label">Position &amp; size (% of screen)</span>
             <div className="overlay-placement-grid">
@@ -127,7 +156,7 @@ export function OverlayList({ overlays, onChange, disabled }: OverlayListProps):
                   min={0}
                   max={100}
                   value={overlay.x}
-                  onChange={(e) => handlePlacementChange(overlay.id, 'x', e.target.value)}
+                  onChange={(e) => handlePlacementChange(overlay, 'x', e.target.value)}
                   disabled={disabled || !overlay.path}
                 />
               </label>
@@ -138,7 +167,7 @@ export function OverlayList({ overlays, onChange, disabled }: OverlayListProps):
                   min={0}
                   max={100}
                   value={overlay.y}
-                  onChange={(e) => handlePlacementChange(overlay.id, 'y', e.target.value)}
+                  onChange={(e) => handlePlacementChange(overlay, 'y', e.target.value)}
                   disabled={disabled || !overlay.path}
                 />
               </label>
@@ -149,7 +178,7 @@ export function OverlayList({ overlays, onChange, disabled }: OverlayListProps):
                   min={1}
                   max={100}
                   value={overlay.width}
-                  onChange={(e) => handlePlacementChange(overlay.id, 'width', e.target.value)}
+                  onChange={(e) => handlePlacementChange(overlay, 'width', e.target.value)}
                   disabled={disabled || !overlay.path}
                 />
               </label>
@@ -160,13 +189,59 @@ export function OverlayList({ overlays, onChange, disabled }: OverlayListProps):
                   min={1}
                   max={100}
                   value={overlay.height}
-                  onChange={(e) => handlePlacementChange(overlay.id, 'height', e.target.value)}
+                  onChange={(e) => handlePlacementChange(overlay, 'height', e.target.value)}
                   disabled={disabled || !overlay.path}
                 />
               </label>
             </div>
+
+            <div className="overlay-center-row">
+              <button
+                type="button"
+                className="browse-btn overlay-center-btn"
+                onClick={() =>
+                  onChange(updateOverlay(overlays, overlay.id, centerOverlayHorizontally(overlay)))
+                }
+                disabled={disabled || !overlay.path}
+              >
+                Center horizontally
+              </button>
+              <button
+                type="button"
+                className="browse-btn overlay-center-btn"
+                onClick={() =>
+                  onChange(updateOverlay(overlays, overlay.id, centerOverlayVertically(overlay)))
+                }
+                disabled={disabled || !overlay.path}
+              >
+                Center vertically
+              </button>
+              <button
+                type="button"
+                className="browse-btn overlay-center-btn"
+                onClick={() => onChange(updateOverlay(overlays, overlay.id, centerOverlayBoth(overlay)))}
+                disabled={disabled || !overlay.path}
+              >
+                Center both
+              </button>
+            </div>
+
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={overlay.lockAspectRatio}
+                onChange={(e) =>
+                  onChange(
+                    updateOverlay(overlays, overlay.id, { lockAspectRatio: e.target.checked })
+                  )
+                }
+                disabled={disabled || !overlay.path}
+              />
+              Lock aspect ratio
+            </label>
             <p className="overlay-placement-hint">
-              0, 0 with 100% width and height covers the full screen. Use smaller values to place an overlay in a corner or region.
+              Drag the overlay box in the live preview to move it, or use the handles to resize. With
+              aspect ratio locked, proportions stay the same and the video will not skew.
             </p>
           </div>
         </div>

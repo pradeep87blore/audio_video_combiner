@@ -318,10 +318,16 @@ function buildOverlayFilterChain(
     const ovlLabel = `[ovl${index}]`
     const outLabel = index === activeOverlays.length - 1 ? '[outv]' : `[tmp${index}]`
 
+    const keyFilter = overlay.removeBlack ? 'colorkey=0x000000:0.28:0.12,' : ''
+    const scaleFilter =
+      overlay.lockAspectRatio !== false
+        ? `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease`
+        : `scale=${targetWidth}:${targetHeight}`
+
     filterParts.push(
       `[${inputIndex}:v]loop=-1:size=32767:start=0,trim=duration=${targetDuration},setpts=PTS-STARTPTS,` +
-        `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,` +
-        `format=rgba,colorchannelmixer=aa=${opacity.toFixed(4)}${ovlLabel}`
+        `${scaleFilter},` +
+        `${keyFilter}format=rgba,colorchannelmixer=aa=${opacity.toFixed(4)}${ovlLabel}`
     )
     filterParts.push(`${currentLabel}${ovlLabel}overlay=${posX}:${posY}:format=auto${outLabel}`)
     currentLabel = outLabel

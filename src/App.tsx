@@ -289,6 +289,7 @@ export default function App(): JSX.Element {
       <LivePreview
         preview={preview}
         overlays={settings.overlays}
+        onOverlaysChange={(overlays) => updateSettings({ overlays })}
         loading={previewLoading}
         error={previewError}
         primaryMode={settings.primaryMode}

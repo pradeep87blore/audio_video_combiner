@@ -57,17 +57,28 @@ function isImagePath(filePath: string): boolean {
 function extractFrameToDataUrl(
   filePath: string,
   seekSeconds = 0,
-  isImage = false
+  isImage = false,
+  removeBlack = false
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
+    const filters: string[] = []
+    if (removeBlack) {
+      // Match final render colorkey so preview mirrors export.
+      filters.push('colorkey=0x000000:0.28:0.12')
+    }
+    filters.push('format=rgba')
+
+    const vfArgs = filters.length > 0 ? ['-vf', filters.join(',')] : []
+
     const args = isImage
-      ? ['-i', filePath, '-vframes', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1']
+      ? ['-i', filePath, ...vfArgs, '-vframes', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1']
       : [
           '-ss',
           String(Math.max(0, seekSeconds)),
           '-i',
           filePath,
+          ...vfArgs,
           '-vframes',
           '1',
           '-f',
@@ -114,14 +125,15 @@ function findSegmentAtTime(segments: PreviewSegment[], time: number): PreviewSeg
 
 async function extractOverlayFrameAtTime(
   overlayPath: string,
-  globalTime: number
+  globalTime: number,
+  removeBlack: boolean
 ): Promise<string> {
   const info = await probeMedia(overlayPath)
   if (!info.duration || info.duration <= 0) {
-    return extractFrameToDataUrl(overlayPath, 0, false)
+    return extractFrameToDataUrl(overlayPath, 0, false, removeBlack)
   }
   const overlayTime = globalTime % info.duration
-  return extractFrameToDataUrl(overlayPath, overlayTime, false)
+  return extractFrameToDataUrl(overlayPath, overlayTime, false, removeBlack)
 }
 
 async function extractOverlayFramesAtTime(
@@ -132,7 +144,11 @@ async function extractOverlayFramesAtTime(
 
   for (const overlay of overlays) {
     if (!overlay.path) continue
-    const frame = await extractOverlayFrameAtTime(overlay.path, globalTime)
+    const frame = await extractOverlayFrameAtTime(
+      overlay.path,
+      globalTime,
+      overlay.removeBlack !== false
+    )
     frames.push({ id: overlay.id, frame })
   }
 

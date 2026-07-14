@@ -26,9 +26,7 @@ export function usePreview({
   const [error, setError] = useState<string | null>(null)
 
   const overlayKey = activeOverlays(overlays)
-    .map((overlay) =>
-      `${overlay.id}:${overlay.path}:${overlay.opacity}:${overlay.x}:${overlay.y}:${overlay.width}:${overlay.height}`
-    )
+    .map((overlay) => `${overlay.id}:${overlay.path}:${overlay.removeBlack ? 1 : 0}`)
     .join('|')
 
   useEffect(() => {

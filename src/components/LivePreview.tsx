@@ -1,15 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OverlayLayer, PreviewData, PreviewOverlayFrame } from '../types'
-import { activeOverlays, overlayRect } from '../utils/overlay'
+import {
+  activeOverlays,
+  applyOverlayDrag,
+  overlayRect,
+  type OverlayResizeHandle
+} from '../utils/overlay'
 import { formatDuration } from '../utils/formatDuration'
 import './LivePreview.css'
 
 interface LivePreviewProps {
   preview: PreviewData | null
   overlays: OverlayLayer[]
+  onOverlaysChange?: (overlays: OverlayLayer[]) => void
   loading: boolean
   error: string | null
   primaryMode: 'videos' | 'images'
+}
+
+interface DragState {
+  overlayId: string
+  mode: 'move' | OverlayResizeHandle
+  startX: number
+  startY: number
+  origin: Pick<OverlayLayer, 'x' | 'y' | 'width' | 'height'>
+  lockAspectRatio: boolean
 }
 
 const SEGMENT_COLORS = [
@@ -22,6 +37,8 @@ const SEGMENT_COLORS = [
   '#8f6b4a',
   '#8f4a6b'
 ]
+
+const RESIZE_HANDLES: OverlayResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
 function drawCompositeFrame(
   canvas: HTMLCanvasElement,
@@ -58,7 +75,14 @@ function drawCompositeFrame(
       overlay.onload = () => {
         const rect = overlayRect(width, height, layer)
         ctx.globalAlpha = layer.opacity / 100
-        ctx.drawImage(overlay, rect.x, rect.y, rect.width, rect.height)
+        if (layer.lockAspectRatio !== false) {
+          const fit = Math.min(rect.width / overlay.width, rect.height / overlay.height)
+          const drawW = Math.max(1, Math.round(overlay.width * fit))
+          const drawH = Math.max(1, Math.round(overlay.height * fit))
+          ctx.drawImage(overlay, rect.x, rect.y, drawW, drawH)
+        } else {
+          ctx.drawImage(overlay, rect.x, rect.y, rect.width, rect.height)
+        }
         ctx.globalAlpha = 1
         pending -= 1
       }
@@ -71,18 +95,31 @@ function drawCompositeFrame(
 export function LivePreview({
   preview,
   overlays,
+  onOverlaysChange,
   loading,
   error,
   primaryMode
 }: LivePreviewProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const editLayerRef = useRef<HTMLDivElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<DragState | null>(null)
+  const overlaysRef = useRef(overlays)
+
   const [currentTime, setCurrentTime] = useState(0)
   const [primaryFrame, setPrimaryFrame] = useState<string | null>(null)
   const [overlayFrames, setOverlayFrames] = useState<PreviewOverlayFrame[]>([])
   const [segmentName, setSegmentName] = useState('')
   const [frameLoading, setFrameLoading] = useState(false)
   const [frameError, setFrameError] = useState<string | null>(null)
+  const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null)
+
+  const editableOverlays = activeOverlays(overlays)
+  const canEditOverlays = Boolean(onOverlaysChange) && editableOverlays.length > 0
+
+  useEffect(() => {
+    overlaysRef.current = overlays
+  }, [overlays])
 
   useEffect(() => {
     if (!preview) {
@@ -99,6 +136,16 @@ export function LivePreview({
     setSegmentName(preview.segments[0]?.name ?? '')
     setFrameError(null)
   }, [preview])
+
+  useEffect(() => {
+    if (editableOverlays.length === 0) {
+      setSelectedOverlayId(null)
+      return
+    }
+    if (!selectedOverlayId || !editableOverlays.some((layer) => layer.id === selectedOverlayId)) {
+      setSelectedOverlayId(editableOverlays[editableOverlays.length - 1].id)
+    }
+  }, [editableOverlays, selectedOverlayId])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -133,6 +180,72 @@ export function LivePreview({
     [preview, overlays]
   )
 
+  const updateOverlayPlacement = useCallback(
+    (id: string, patch: Pick<OverlayLayer, 'x' | 'y' | 'width' | 'height'>) => {
+      if (!onOverlaysChange) return
+      onOverlaysChange(
+        overlaysRef.current.map((overlay) => (overlay.id === id ? { ...overlay, ...patch } : overlay))
+      )
+    },
+    [onOverlaysChange]
+  )
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent): void => {
+      const drag = dragRef.current
+      const layer = editLayerRef.current
+      if (!drag || !layer) return
+
+      const bounds = layer.getBoundingClientRect()
+      if (bounds.width <= 0 || bounds.height <= 0) return
+
+      const dxPercent = ((event.clientX - drag.startX) / bounds.width) * 100
+      const dyPercent = ((event.clientY - drag.startY) / bounds.height) * 100
+      updateOverlayPlacement(
+        drag.overlayId,
+        applyOverlayDrag(drag.origin, drag.mode, dxPercent, dyPercent, drag.lockAspectRatio)
+      )
+    }
+
+    const handlePointerUp = (): void => {
+      dragRef.current = null
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('pointercancel', handlePointerUp)
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('pointercancel', handlePointerUp)
+    }
+  }, [updateOverlayPlacement])
+
+  const beginDrag = (
+    event: React.PointerEvent,
+    overlay: OverlayLayer,
+    mode: DragState['mode']
+  ): void => {
+    if (!onOverlaysChange) return
+    event.preventDefault()
+    event.stopPropagation()
+    setSelectedOverlayId(overlay.id)
+    dragRef.current = {
+      overlayId: overlay.id,
+      mode,
+      startX: event.clientX,
+      startY: event.clientY,
+      origin: {
+        x: overlay.x,
+        y: overlay.y,
+        width: overlay.width,
+        height: overlay.height
+      },
+      lockAspectRatio: overlay.lockAspectRatio !== false
+    }
+  }
+
   const handleTimelineClick = (event: React.MouseEvent<HTMLDivElement>): void => {
     if (!preview || !timelineRef.current) return
 
@@ -156,7 +269,7 @@ export function LivePreview({
 
   const hasInputs = Boolean(preview) || loading || error
   const playheadPercent = preview ? (currentTime / preview.duration) * 100 : 0
-  const activeOverlayCount = activeOverlays(overlays).length
+  const activeOverlayCount = editableOverlays.length
 
   if (!hasInputs) {
     return (
@@ -184,7 +297,39 @@ export function LivePreview({
         {(error || frameError) && !loading && !frameLoading && (
           <div className="preview-overlay-status preview-error">{error ?? frameError}</div>
         )}
-        <canvas ref={canvasRef} className="preview-canvas" />
+        <div className="preview-canvas-stack">
+          <canvas ref={canvasRef} className="preview-canvas" />
+          {canEditOverlays && primaryFrame && (
+            <div ref={editLayerRef} className="overlay-edit-layer" aria-hidden={!canEditOverlays}>
+              {editableOverlays.map((overlay, index) => {
+                const selected = overlay.id === selectedOverlayId
+                return (
+                  <div
+                    key={overlay.id}
+                    className={`overlay-box ${selected ? 'selected' : ''}`}
+                    style={{
+                      left: `${overlay.x}%`,
+                      top: `${overlay.y}%`,
+                      width: `${overlay.width}%`,
+                      height: `${overlay.height}%`
+                    }}
+                    onPointerDown={(event) => beginDrag(event, overlay, 'move')}
+                  >
+                    <span className="overlay-box-label">Overlay {index + 1}</span>
+                    {selected &&
+                      RESIZE_HANDLES.map((handle) => (
+                        <div
+                          key={handle}
+                          className={`overlay-handle overlay-handle-${handle}`}
+                          onPointerDown={(event) => beginDrag(event, overlay, handle)}
+                        />
+                      ))}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
         {!primaryFrame && !loading && !error && (
           <div className="preview-placeholder">No frame available</div>
         )}
@@ -240,12 +385,13 @@ export function LivePreview({
             <div className="timeline-playhead" style={{ left: `${playheadPercent}%` }} />
           </div>
           <p className="timeline-hint">
-            Click anywhere on the timeline to preview that moment. Use ← → to step by 1s (Shift+arrow for 5s).
+            Click anywhere on the timeline to preview that moment. Use ← → to step by 1s (Shift+arrow for
+            5s).
             {primaryMode === 'images'
               ? ' Sample image order (shuffled).'
               : ' Sample clip order (shuffled).'}
             {activeOverlayCount > 0 &&
-              ` ${activeOverlayCount} overlay${activeOverlayCount === 1 ? '' : 's'} active.`}
+              ' Drag overlays to move; resize with handles. Use Center buttons or Lock aspect ratio under each overlay.'}
           </p>
         </>
       )}

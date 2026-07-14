@@ -18,6 +18,16 @@ export interface OverlayLayer {
   width: number
   /** Height as percentage of canvas height. */
   height: number
+  /**
+   * Key out black / near-black pixels so they become transparent.
+   * Useful for overlays that use black instead of (or in addition to) a real alpha channel.
+   */
+  removeBlack: boolean
+  /**
+   * When true, resizing keeps the overlay's proportions and the video is fit (not stretched).
+   * When false, the overlay can be freely skewed to fill its box.
+   */
+  lockAspectRatio: boolean
 }
 
 export interface PreviewOverlayFrame {
