@@ -50,7 +50,7 @@ Scene changes use a **5-second transition** (2.5s fade to black, then 2.5s fade 
 - Format: MP4 (H.264 video, AAC audio)
 - Resolution: Canvas sized to the largest width/height among primary clips or images; content is scaled and letterboxed to fit
 - Frame rate: 30 fps for image slideshows; for video clips, 30 fps unless all clips share the same fps
-- **Hardware encoding**: Set **Video encoding** to Auto (default) to use NVIDIA NVENC, Intel Quick Sync, or AMD AMF when available. GPU speeds up encoding; scaling/fades/overlay still use the CPU.
+- **Hardware encoding**: Set **Video encoding** to Auto (default) to use NVIDIA NVENC, Intel Quick Sync, or AMD AMF when available. On NVIDIA systems, Auto/GPU also use CUDA for decode and scaling. Fades, colorkey, and overlay compositing still run on the CPU.
 
 ## Notes
 

@@ -5,6 +5,12 @@ import { randomUUID } from 'crypto'
 import { tmpdir } from 'os'
 import { appendSceneFades } from './transitions'
 import { resolveVideoEncoder, type EncoderPreference, type VideoEncoderConfig } from './encoders'
+import {
+  buildOverlayScaleFilter,
+  buildScalePadFilter,
+  resolveGpuAccel,
+  type GpuAccelConfig
+} from './hwaccel'
 import { getFfmpegPath } from './paths'
 import { probeMedia, probeWavDuration } from './probe'
 import {
@@ -88,15 +94,6 @@ function runFfmpeg(
   })
 }
 
-function buildScalePadFilter(width: number, height: number, fps: number): string {
-  return (
-    `scale=${width}:${height}:force_original_aspect_ratio=decrease:force_divisible_by=2,` +
-    `format=yuv420p,` +
-    `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
-    `fps=${fps},setsar=1`
-  )
-}
-
 function buildConcatFilter(
   segments: ClipSegment[],
   width: number,
@@ -104,7 +101,8 @@ function buildConcatFilter(
   fps: number,
   globalOffset: number,
   globalSegmentCount: number,
-  sceneTransitions: boolean
+  sceneTransitions: boolean,
+  accel: GpuAccelConfig | null
 ): { filterComplex: string; inputArgs: string[] } {
   const inputArgs: string[] = []
   const filterParts: string[] = []
@@ -113,14 +111,18 @@ function buildConcatFilter(
     const globalIndex = globalOffset + localIndex
 
     if (segment.isImage) {
+      // Images stay on the CPU path — CUDA hwaccel does not apply.
       inputArgs.push('-loop', '1', '-i', segment.path)
+    } else if (accel) {
+      inputArgs.push(...accel.inputArgs, '-i', segment.path)
     } else {
       inputArgs.push('-i', segment.path)
     }
 
+    const useCudaScale = Boolean(accel) && !segment.isImage
     let chain =
       `[${localIndex}:v]trim=duration=${segment.duration},setpts=PTS-STARTPTS,` +
-      buildScalePadFilter(width, height, fps)
+      buildScalePadFilter(width, height, fps, useCudaScale ? accel : null)
     chain = appendSceneFades(
       chain,
       segment.duration,
@@ -152,7 +154,8 @@ async function runConcatPass(
   onProgress: ProgressCallback,
   phaseStart: number,
   phaseWeight: number,
-  sceneTransitions: boolean
+  sceneTransitions: boolean,
+  accel: GpuAccelConfig | null
 ): Promise<void> {
   const passDuration = segments.reduce((sum, segment) => sum + segment.duration, 0)
   const { filterComplex, inputArgs } = buildConcatFilter(
@@ -162,7 +165,8 @@ async function runConcatPass(
     fps,
     globalOffset,
     globalSegmentCount,
-    sceneTransitions
+    sceneTransitions,
+    accel
   )
 
   await runFfmpeg(
@@ -225,7 +229,8 @@ async function concatPrimary(
   onProgress: ProgressCallback,
   isImageMode: boolean,
   encoder: VideoEncoderConfig,
-  sceneTransitions: boolean
+  sceneTransitions: boolean,
+  accel: GpuAccelConfig | null
 ): Promise<string> {
   const { width, height } = getCanvasSize([...clips, ...bookendClips])
   const fps = isImageMode ? 30 : getTargetFps([...clips, ...bookendClips])
@@ -235,7 +240,11 @@ async function concatPrimary(
 
   onProgress(
     5,
-    isImageMode ? 'Building slideshow from images...' : 'Concatenating primary clips...'
+    isImageMode
+      ? 'Building slideshow from images...'
+      : accel
+        ? `Concatenating primary clips (${accel.label})...`
+        : 'Concatenating primary clips...'
   )
 
   if (globalSegmentCount <= MAX_SEGMENTS_PER_PASS) {
@@ -251,7 +260,8 @@ async function concatPrimary(
       onProgress,
       5,
       50,
-      sceneTransitions
+      sceneTransitions,
+      accel
     )
     return outputPath
   }
@@ -278,7 +288,8 @@ async function concatPrimary(
       onProgress,
       5 + chunkPaths.length * passWeight,
       passWeight,
-      sceneTransitions
+      sceneTransitions,
+      accel
     )
     chunkPaths.push(chunkPath)
   }
@@ -302,11 +313,13 @@ function buildOverlayFilterChain(
   overlays: OverlayLayer[],
   canvasWidth: number,
   canvasHeight: number,
-  targetDuration: number
+  targetDuration: number,
+  accel: GpuAccelConfig | null,
+  baseLabel = '[0:v]'
 ): string {
   const activeOverlays = overlays.filter((overlay) => overlay.path)
   const filterParts: string[] = []
-  let currentLabel = '[0:v]'
+  let currentLabel = baseLabel
 
   activeOverlays.forEach((overlay, index) => {
     const inputIndex = index + 1
@@ -319,10 +332,12 @@ function buildOverlayFilterChain(
     const outLabel = index === activeOverlays.length - 1 ? '[outv]' : `[tmp${index}]`
 
     const keyFilter = overlay.removeBlack ? 'colorkey=0x000000:0.28:0.12,' : ''
-    const scaleFilter =
-      overlay.lockAspectRatio !== false
-        ? `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease`
-        : `scale=${targetWidth}:${targetHeight}`
+    const scaleFilter = buildOverlayScaleFilter(
+      targetWidth,
+      targetHeight,
+      overlay.lockAspectRatio !== false,
+      accel
+    )
 
     filterParts.push(
       `[${inputIndex}:v]loop=-1:size=32767:start=0,trim=duration=${targetDuration},setpts=PTS-STARTPTS,` +
@@ -345,28 +360,52 @@ async function renderFinal(
   canvasHeight: number,
   overlays: OverlayLayer[],
   onProgress: ProgressCallback,
-  encoder: VideoEncoderConfig
+  encoder: VideoEncoderConfig,
+  accel: GpuAccelConfig | null
 ): Promise<void> {
-  onProgress(60, 'Rendering final output...')
+  onProgress(
+    60,
+    accel ? `Rendering final output (${accel.label})...` : 'Rendering final output...'
+  )
 
   const activeOverlays = overlays.filter((overlay) => overlay.path)
-  const args: string[] = ['-i', primaryPath]
+  const args: string[] = []
+
+  if (accel) {
+    args.push(...accel.inputArgs)
+  }
+  args.push('-i', primaryPath)
 
   for (const overlay of activeOverlays) {
+    if (accel) {
+      args.push(...accel.inputArgs)
+    }
     args.push('-i', overlay.path)
   }
 
-  const filterComplex =
-    activeOverlays.length > 0
-      ? buildOverlayFilterChain(activeOverlays, canvasWidth, canvasHeight, targetDuration)
-      : undefined
-
   args.push('-i', wavPath)
-
   const audioInputIndex = 1 + activeOverlays.length
 
-  if (filterComplex) {
-    args.push('-filter_complex', filterComplex, '-map', '[outv]')
+  if (activeOverlays.length > 0) {
+    const parts: string[] = []
+    let baseLabel = '[0:v]'
+    if (accel) {
+      parts.push('[0:v]hwdownload,format=nv12,format=yuv420p[base0]')
+      baseLabel = '[base0]'
+    }
+    parts.push(
+      buildOverlayFilterChain(
+        activeOverlays,
+        canvasWidth,
+        canvasHeight,
+        targetDuration,
+        accel,
+        baseLabel
+      )
+    )
+    args.push('-filter_complex', parts.join(';'), '-map', '[outv]')
+  } else if (accel) {
+    args.push('-vf', 'hwdownload,format=nv12,format=yuv420p', '-map', '0:v')
   } else {
     args.push('-map', '0:v')
   }
@@ -402,8 +441,12 @@ export async function runCombineJob(
     const targetDuration = await probeWavDuration(options.wavPath)
     const isImageMode = options.primaryMode === 'images'
     const encoder = await resolveVideoEncoder(options.encoderPreference)
+    const accel = await resolveGpuAccel(options.encoderPreference)
 
-    onProgress(2, `Encoding with ${encoder.label}...`)
+    const encodeMsg = accel
+      ? `Encoding with ${encoder.label} + ${accel.label}...`
+      : `Encoding with ${encoder.label}...`
+    onProgress(2, encodeMsg)
 
     const clips = isImageMode
       ? await buildImageInfos(options.primaryPaths)
@@ -432,28 +475,67 @@ export async function runCombineJob(
 
     const { width, height } = getCanvasSize([...clips, ...bookendClips])
 
-    const primaryPath = await concatPrimary(
-      segments,
-      clips,
-      bookendClips,
-      tempDir,
-      onProgress,
-      isImageMode,
-      encoder,
-      options.sceneTransitions
-    )
+    // CUDA scale helps video clips; image slideshows stay on CPU filters.
+    const concatAccel = isImageMode ? null : accel
 
-    await renderFinal(
-      primaryPath,
-      options.wavPath,
-      options.outputPath,
-      targetDuration,
-      width,
-      height,
-      options.overlays,
-      onProgress,
-      encoder
-    )
+    let primaryPath: string
+    try {
+      primaryPath = await concatPrimary(
+        segments,
+        clips,
+        bookendClips,
+        tempDir,
+        onProgress,
+        isImageMode,
+        encoder,
+        options.sceneTransitions,
+        concatAccel
+      )
+    } catch (err) {
+      if (!concatAccel) throw err
+      onProgress(5, 'CUDA concat failed — retrying without GPU decode/scale...')
+      primaryPath = await concatPrimary(
+        segments,
+        clips,
+        bookendClips,
+        tempDir,
+        onProgress,
+        isImageMode,
+        encoder,
+        options.sceneTransitions,
+        null
+      )
+    }
+
+    try {
+      await renderFinal(
+        primaryPath,
+        options.wavPath,
+        options.outputPath,
+        targetDuration,
+        width,
+        height,
+        options.overlays,
+        onProgress,
+        encoder,
+        accel
+      )
+    } catch (err) {
+      if (!accel) throw err
+      onProgress(60, 'CUDA final render failed — retrying without GPU decode/scale...')
+      await renderFinal(
+        primaryPath,
+        options.wavPath,
+        options.outputPath,
+        targetDuration,
+        width,
+        height,
+        options.overlays,
+        onProgress,
+        encoder,
+        null
+      )
+    }
 
     onProgress(100, 'Done!')
   } finally {

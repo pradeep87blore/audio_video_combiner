@@ -1,5 +1,6 @@
 import { spawn } from 'child_process'
 import { getFfmpegPath } from './paths'
+import { resetGpuAccelCache } from './hwaccel'
 
 export type EncoderPreference = 'auto' | 'gpu' | 'cpu'
 
@@ -106,4 +107,5 @@ export async function resolveVideoEncoder(
 
 export function resetEncoderCache(): void {
   cachedEncoder = null
+  resetGpuAccelCache()
 }

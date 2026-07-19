@@ -47,7 +47,9 @@ export function EncoderSelector({
             ? 'Forces hardware encoding (NVIDIA / Intel / AMD).'
             : 'Uses CPU libx264 — slower but works everywhere.'}
         {' '}
-        Filters (scaling, fades, overlay) still run on the CPU; GPU mainly speeds up encoding.
+        {value === 'cpu'
+          ? 'Decode and filters also stay on the CPU.'
+          : 'When NVIDIA CUDA is available, Auto/GPU also accelerate decode and scaling. Fades, colorkey, and overlay compositing still use the CPU.'}
       </p>
     </div>
   )
