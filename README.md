@@ -37,7 +37,7 @@ npm run preview
 3. **Intro / Outro** (optional) — Separate video clips played at the start and end. Primary content fills the remaining music duration. Crossfades apply between all segments.
 4. **Music (WAV)** — Select a WAV file. The output video duration matches this file.
 5. **Output file** — Choose where to save the resulting MP4.
-6. Click **Add to Queue** to start generation. You can open multiple **job tabs** (each with its own settings), queue several videos, and they will process **one at a time**.
+6. Click **Add to Queue** to start generation. You can open multiple **job tabs** (each with its own settings), queue several videos, and up to **3 jobs run in parallel**; extra jobs wait until a slot frees up.
 
 A **live preview** appears once you select a WAV file and primary media folder. **Click the timeline** to jump to any moment and see that frame (with overlay). Use ← → keys to step through time.
 

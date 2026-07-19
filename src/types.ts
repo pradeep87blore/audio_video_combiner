@@ -83,7 +83,14 @@ export interface QueueJobSnapshot {
 
 export interface QueueSnapshot {
   jobs: QueueJobSnapshot[]
+  /** Queued + running jobs (badge count). */
   activeCount: number
+  /** Jobs currently encoding. */
+  runningCount: number
+  /** Jobs waiting for a free slot. */
+  queuedCount: number
+  /** Max concurrent running jobs. */
+  maxParallel: number
 }
 
 export interface PreviewSegment {

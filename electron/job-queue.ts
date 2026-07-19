@@ -7,6 +7,9 @@ import type { CombineOptions, QueueJobSnapshot, QueueSnapshot } from '../src/typ
 
 export type QueueJobStatus = 'queued' | 'running' | 'completed' | 'failed'
 
+/** Max jobs encoding at the same time. Additional jobs stay queued. */
+export const MAX_PARALLEL_JOBS = 3
+
 export interface QueueJob {
   id: string
   tabId: string
@@ -42,7 +45,15 @@ function toSnapshotJob(job: QueueJob): QueueJobSnapshot {
 
 function snapshot(jobs: QueueJob[]): QueueSnapshot {
   const activeCount = jobs.filter((job) => job.status === 'queued' || job.status === 'running').length
-  return { jobs: jobs.map(toSnapshotJob), activeCount }
+  const runningCount = jobs.filter((job) => job.status === 'running').length
+  const queuedCount = jobs.filter((job) => job.status === 'queued').length
+  return {
+    jobs: jobs.map(toSnapshotJob),
+    activeCount,
+    runningCount,
+    queuedCount,
+    maxParallel: MAX_PARALLEL_JOBS
+  }
 }
 
 function updateBadge(jobs: QueueJob[]): void {
@@ -52,7 +63,8 @@ function updateBadge(jobs: QueueJob[]): void {
 
 export class JobQueue {
   private jobs: QueueJob[] = []
-  private processing = false
+  /** Number of jobs currently executing (not merely queued). */
+  private runningCount = 0
 
   getSnapshot(): QueueSnapshot {
     return snapshot(this.jobs)
@@ -73,7 +85,7 @@ export class JobQueue {
     this.jobs.push(job)
     updateBadge(this.jobs)
     broadcast('queue-updated', snapshot(this.jobs))
-    void this.processNext()
+    this.fillSlots()
 
     return id
   }
@@ -85,62 +97,65 @@ export class JobQueue {
     broadcast('queue-updated', snapshot(this.jobs))
   }
 
-  private async processNext(): Promise<void> {
-    if (this.processing) return
+  /** Start queued jobs until the parallel limit is reached. */
+  private fillSlots(): void {
+    while (this.runningCount < MAX_PARALLEL_JOBS) {
+      const next = this.jobs.find((job) => job.status === 'queued')
+      if (!next) break
+      this.runningCount += 1
+      void this.runJob(next)
+    }
+  }
 
-    const next = this.jobs.find((job) => job.status === 'queued')
-    if (!next) return
-
-    this.processing = true
-    this.updateJob(next.id, { status: 'running', progress: 0, message: 'Starting...', error: null })
+  private async runJob(job: QueueJob): Promise<void> {
+    this.updateJob(job.id, { status: 'running', progress: 0, message: 'Starting...', error: null })
     updateBadge(this.jobs)
 
-    const primaryPaths =
-      next.options.primaryMode === 'images'
-        ? await listImagesInFolder(next.options.primaryFolder)
-        : await listVideosInFolder(next.options.primaryFolder)
-
-    if (primaryPaths.length === 0) {
-      this.updateJob(next.id, {
-        status: 'failed',
-        error:
-          next.options.primaryMode === 'images'
-            ? 'No image files found in the selected folder'
-            : 'No video files found in the selected folder',
-        message: 'Failed'
-      })
-      this.processing = false
-      updateBadge(this.jobs)
-      void this.processNext()
-      return
-    }
-
     try {
+      const primaryPaths =
+        job.options.primaryMode === 'images'
+          ? await listImagesInFolder(job.options.primaryFolder)
+          : await listVideosInFolder(job.options.primaryFolder)
+
+      if (primaryPaths.length === 0) {
+        this.updateJob(job.id, {
+          status: 'failed',
+          error:
+            job.options.primaryMode === 'images'
+              ? 'No image files found in the selected folder'
+              : 'No video files found in the selected folder',
+          message: 'Failed'
+        })
+        return
+      }
+
+      // Each job gets its own temp dir inside runCombineJob (UUID), own output path,
+      // and progress events keyed by jobId — safe to run in parallel.
       await runCombineJob(
         {
-          primaryFolder: next.options.primaryFolder,
-          primaryMode: next.options.primaryMode,
+          primaryFolder: job.options.primaryFolder,
+          primaryMode: job.options.primaryMode,
           primaryPaths,
-          introPath: next.options.introPath,
-          outroPath: next.options.outroPath,
-          overlays: next.options.overlays,
-          wavPath: next.options.wavPath,
-          outputPath: next.options.outputPath,
-          encoderPreference: next.options.encoderPreference,
-          sceneTransitions: next.options.sceneTransitions
+          introPath: job.options.introPath,
+          outroPath: job.options.outroPath,
+          overlays: job.options.overlays,
+          wavPath: job.options.wavPath,
+          outputPath: job.options.outputPath,
+          encoderPreference: job.options.encoderPreference,
+          sceneTransitions: job.options.sceneTransitions
         },
         (percent, message) => {
-          this.updateJob(next.id, { progress: percent, message })
+          this.updateJob(job.id, { progress: percent, message })
           broadcast('queue-progress', {
-            jobId: next.id,
-            tabId: next.tabId,
+            jobId: job.id,
+            tabId: job.tabId,
             percent,
             message
           })
         }
       )
 
-      this.updateJob(next.id, {
+      this.updateJob(job.id, {
         status: 'completed',
         progress: 100,
         message: 'Done!',
@@ -148,17 +163,17 @@ export class JobQueue {
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'An unknown error occurred'
-      this.updateJob(next.id, {
+      this.updateJob(job.id, {
         status: 'failed',
         progress: 0,
         message: 'Failed',
         error: message
       })
+    } finally {
+      this.runningCount = Math.max(0, this.runningCount - 1)
+      updateBadge(this.jobs)
+      this.fillSlots()
     }
-
-    this.processing = false
-    updateBadge(this.jobs)
-    void this.processNext()
   }
 }
 

@@ -36,7 +36,13 @@ function createInitialTabsState(): TabsPersistedState {
 
 export default function App(): JSX.Element {
   const [tabsState, setTabsState] = useState<TabsPersistedState>(createInitialTabsState)
-  const [queueSnapshot, setQueueSnapshot] = useState<QueueSnapshot>({ jobs: [], activeCount: 0 })
+  const [queueSnapshot, setQueueSnapshot] = useState<QueueSnapshot>({
+    jobs: [],
+    activeCount: 0,
+    runningCount: 0,
+    queuedCount: 0,
+    maxParallel: 3
+  })
   const [primaryFiles, setPrimaryFiles] = useState<string[]>([])
   const [detectedEncoder, setDetectedEncoder] = useState<EncoderInfo | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
@@ -281,8 +287,15 @@ export default function App(): JSX.Element {
 
       {queueSnapshot.activeCount > 0 && (
         <div className="queue-summary">
-          <strong>{queueSnapshot.activeCount}</strong> active job
-          {queueSnapshot.activeCount === 1 ? '' : 's'} in queue (processing sequentially)
+          <strong>{queueSnapshot.runningCount}</strong> running
+          {queueSnapshot.queuedCount > 0 && (
+            <>
+              {' · '}
+              <strong>{queueSnapshot.queuedCount}</strong> waiting
+            </>
+          )}
+          {' '}
+          (up to {queueSnapshot.maxParallel} in parallel)
         </div>
       )}
 
